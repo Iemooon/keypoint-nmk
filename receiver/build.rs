@@ -700,7 +700,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rustc-link-arg=-Tdefmt.x");
 
-    // ---- Nordic Gazell library (closed source, SDK 12.3, Cortex-M4 hard-float)
+    // ---- Nordic Gazell library (closed source, SDK 17.1.1, Cortex-M4 hard-float)
     //
     // Symbol contract read out with arm-none-eabi-nm rather than assumed: it
     // needs from us only memcpy/memset plus the four nrf_gzll_* callbacks (see
@@ -708,14 +708,23 @@ fn main() {
     // three ISRs it uses (TIMER2_IRQHandler, RADIO_IRQHandler,
     // SWI0_EGU0_IRQHandler) which src/gazell.rs reaches through three vector
     // table thunks because nrf-pac names those interrupts differently.
-    // Where the Gazell archive comes from, and which of its per-chip builds to
-    // use. Overridable with GZLL_DIR / GZLL_LIB so a different SDK's build can
-    // be tried without touching code - the library version is a real variable
-    // here: the original keyboard (nRF51822) was built against SDK 11.0.0's
-    // gzll_gcc.a, which is nRF51-only and cannot run on nRF52840, while SDK
-    // 12.3 was the first nRF52 port of that same code. This port now links SDK
-    // 17.1.1's nRF52840-specific build, whose symbol contract was checked to be
-    // identical (same four callbacks required, same three ISRs defined).
+    // Where the Gazell archive comes from. Overridable with GZLL_DIR / GZLL_LIB so
+    // a different SDK's build can be tried without touching code - the library
+    // version is a real variable here: the original keyboard (nRF51822) was built
+    // against SDK 11.0.0's gzll_gcc.a, which is nRF51-only and cannot run on
+    // nRF52840, while SDK 12.3 was the first nRF52 port of that same code. This
+    // port now links SDK 17.1.1's nRF52840-specific build, whose symbol contract
+    // was checked to be identical (same four callbacks required, same three ISRs
+    // defined).
+    //
+    // There is deliberately no per-chip selection here, and the wording used to
+    // imply there was one. This single archive is what every profile links - the
+    // two transmitter halves and all three receiver boards, the nRF52833 one
+    // included. Saying so out loud matters because the name reads like a
+    // restriction it does not impose, and because whether the pairing is right on
+    // nRF52833 silicon is untested: no 52833 board has been flashed with this
+    // firmware. `GZLL_LIB=gzll_nrf52_gcc.a` is the knob if Nordic's generic nRF52
+    // build is ever wanted; `vendor/gzll/README.md` says which archive is which.
     let gzll_dir = {
         let raw = std::env::var("GZLL_DIR").unwrap_or_else(|_| {
             // Default to the archive vendored in this repository; see vendor/gzll/README.md

@@ -240,7 +240,12 @@ region vs chip size, two halves on the same pipe, two halves sharing a channel,
 
 Chip support: `nrf52840` (default) / `nrf52833` / `nrf52832` features on `keyboard`
 (`nrf52840` / `nrf52833` on `receiver`, which needs a USB controller). The Gazell
-archive is selected by `[gazell] library` in `keyboard/board.toml`.
+archive is **not** picked per chip: the transmitter names it with `[gazell] library` in
+`keyboard/board.toml`, the receiver defaults in its `build.rs`, and both resolve to the
+one vendored `gzll_nrf52840_gcc.a` — which is therefore also what the nRF52833 profiles
+link. `vendor/gzll/README.md` records that pairing, the one archive it does not link, and
+the `GZLL_LIB` escape hatch; whether the shared archive is right on nRF52833 silicon is
+untested, since no 52833 board has been flashed with this firmware.
 
 ## Verification status — read this before trusting anything
 

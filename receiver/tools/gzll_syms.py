@@ -12,8 +12,12 @@ import struct
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# Default to the archive the firmware actually links. The docstring has said
+# "vendored" all along while the path pointed into `reference/gzll/`, which this
+# repository does not contain - so it only ever worked with a hand-typed path.
 PATH = (sys.argv[1] if len(sys.argv) > 1 else
-        os.path.normpath(os.path.join(_HERE, "..", "reference", "gzll", "gzll_nrf52_gcc.a")))
+        os.path.normpath(os.path.join(_HERE, "..", "..", "vendor", "gzll",
+                                      "gzll_nrf52840_gcc.a")))
 data = open(PATH, "rb").read()
 
 # ---- ar walk (same corrected logic as gzll_provenance) ----------------

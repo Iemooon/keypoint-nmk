@@ -11,8 +11,12 @@ import struct
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# Default to the archive the firmware actually links. The old default pointed into
+# `reference/gzll/`, a directory that is not in this repository at all, so the
+# script failed with FileNotFoundError unless a path was typed by hand.
 PATH = (sys.argv[1] if len(sys.argv) > 1 else
-        os.path.normpath(os.path.join(_HERE, "..", "reference", "gzll", "gzll_nrf52_gcc.a")))
+        os.path.normpath(os.path.join(_HERE, "..", "..", "vendor", "gzll",
+                                      "gzll_nrf52840_gcc.a")))
 data = open(PATH, "rb").read()
 assert data[:8] == b"!<arch>\n", "not an ar archive"
 
