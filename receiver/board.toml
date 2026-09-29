@@ -1,0 +1,369 @@
+# =============================================================================
+#  board.toml - THE single source of truth for the KeyPoint 2.4GHz receiver.
+#
+#  Everything that describes "which keyboard this is" lives here. build.rs reads
+#  this file and generates, from these numbers alone:
+#
+#    - $OUT_DIR/board_generated.rs  : Rust constants (rows/cols/radio/IDs)
+#    - $OUT_DIR/memory.x            : the linker layout
+#    - $OUT_DIR/config_generated.rs : the compressed Vial blob + keyboard ID
+#
+#  The Vial *definition* (layout + matrix block) is NOT generated: it is the
+#  file `vial.json` at the project root, carried over unchanged from the BLE
+#  dongle firmware (keypoint-rmk-dongle), so that this receiver and that one are
+#  the same keyboard as far as Vial is concerned. build.rs cross-checks it
+#  against the geometry and USB IDs below and refuses to build on a mismatch.
+#
+#  Geometry, source of truth for every number below: `keypoint-rmk-dongle`
+#  (src/left.rs, src/right.rs, memory-halves.x, memory-dongle.x, vial.json).
+#
+#  Lineage: this receiver is the nmk project's `gazell-dongle` (RMS: Gazell host
+#  in, USB HID + Vial out) re-aimed at this keyboard's shape. The Gazell library
+#  version note in nmk's board.toml applies here verbatim and is repeated once
+#  below, because it is the single most expensive thing to rediscover.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Chip and flash/RAM layout.
+#
+# build.rs GENERATES memory.x from this section, so a bad layout is a build
+# error instead of a board that flashes fine and never boots.
+# -----------------------------------------------------------------------------
+[chip]
+# Must match the Cargo feature you build with (default `nrf52840`).
+name = "nrf52840"
+
+[memory]
+# flash_origin is the FIRST BYTE OF THE APPLICATION SLOT, which depends on the
+# bootloader, not on the chip. The official Nordic nRF52840 Dongle (PCA10059)
+# jumps into its application at 0x1000 (byte-level proof: the working receiver
+# image is one continuous image linked at 0x00001000); the Nordic USB DFU
+# bootloader owns everything above 0xE0000.
+flash_origin = 0x00001000
+flash_length = "636K"
+# RAM starts 8 bytes in, as in the working RMK images on this dongle.
+ram_origin = 0x20000008
+ram_length = "255K"
+
+# -----------------------------------------------------------------------------
+# USB identity of the board.
+# -----------------------------------------------------------------------------
+[device]
+# Deliberately the SAME VID/PID as the BLE dongle firmware (KeyPoint-DG), so
+# Windows reuses the existing driver and Vial recognises the same keyboard.
+vid = 0x1313
+pid = 0x1208
+manufacturer = "Lemon"
+# USB product string - visible from the host, so it both names the keyboard and
+# proves that a flash actually took effect.
+product_name = "KeyPoint NMK"
+# Name shown inside Vial.
+vial_name = "KeyPoint NMK"
+
+# Vial keyboard ID (8 bytes, hex). MUST stay the value the keyboard has always
+# used: Vial.app ties saved layouts (.vil) to it, so changing it would orphan
+# every saved layout. Same value as keypoint-rmk-dongle and nmk.
+vial_keyboard_id = "B9BC09B29D374CEA"
+
+# -----------------------------------------------------------------------------
+# Matrix geometry - the part that changes when you build a different keyboard.
+# -----------------------------------------------------------------------------
+[matrix]
+# Rows/columns of ONE half's matrix, as the transmitter sends them: ONE BITMAP of
+# cells, bit `row * cols_per_half + col`, rows concatenated.
+#   * rows_per_half * cols_per_half <= 256   (Gazell's payload limit, 32 bytes)
+#
+# The link bounds the CELL COUNT, not either dimension - see the table in
+# build.rs for the sizes that admits (8x16 -> 16 bytes, 16x16 -> 32 bytes).
+#
+# With 8 columns the bitmap is byte-for-byte the layout this file used to
+# describe ("one byte per row, one bit per column"), which is why KeyPoint's
+# packets did not change when the format became a bitmap.
+# tools/verify_matrix_bitmap.py checks that property on this keyboard's geometry
+# and the round trip on the wider ones.
+#
+# KeyPoint halves are 6 rows x 8 columns (src/left.rs: input [P0_24, P0_17,
+# P0_16, P1_08, P0_31, P0_29], output [P0_13, P0_15, P0_19, P0_22, P0_20,
+# P1_00, P0_28, P0_30]). Unlike nmk's flat 4x12 keyboards, the halves are
+# joined along ROWS here: left half = rows 0..5, right half = rows 6..11, which
+# is exactly the 12x8 matrix the BLE dongle reports and the one vial.json
+# describes. src/board.rs derives the logical matrix from this.
+rows_per_half = 6
+cols_per_half = 8
+# Number of halves feeding this receiver. Fixed at 2 (Gazell pipe 0 = left,
+# pipe 1 = right); the build fails on any other value.
+halves = 2
+
+# -----------------------------------------------------------------------------
+# 2.4GHz Gazell link. These MUST match the transmitters exactly - a wrong value
+# here looks exactly like "no link at all".
+# -----------------------------------------------------------------------------
+[gazell]
+# Channel table the HOST listens on. The halves each use a 3-channel subset of
+# it, so this is their union:
+#
+#   left half  (pipe 0): {15, 47, 71}
+#   right half (pipe 1): {31, 57, 81}
+#   host       (this file): [15, 31, 47, 57, 71, 81]   <- the union, interleaved
+#
+# CHANNEL PLANE, NOT NEGOTIABLE: this table must not intersect nmk's working
+# keyboard, whose receiver listens on [13, 27, 43, 53, 67, 77] (left {13,43,67},
+# right {27,53,77}). The two sets share no channel, so the two keyboards can be
+# powered on at the same time without stealing each other's packets. Do not
+# "harmonise" them.
+#
+# The transmitters hold only half of this table each, which is what makes the
+# host's table twice the size of theirs - and why the host must NOT call
+# nrf_gzll_set_timeslots_per_channel(): a rotation is 6 channels * 2 timeslots
+# = 12 timeslots, shorter than the 15 a half dwells on a channel while out of
+# sync, so a searching half always meets the host before moving on. See
+# src/board.rs for the full arithmetic.
+#
+# Gazell allows at most 16 channels.
+channel_table = [15, 31, 47, 57, 71, 81]
+
+base_address_0 = 0x01020304
+base_address_1 = 0x05060708
+
+# "250kbit" | "1mbit" | "2mbit"
+datarate = "1mbit"
+timeslot_period_us = 900
+
+# Which host RX pipes to monitor, as the library's bitmap
+# (`nrf_gzll_set_rx_pipes_enabled`). The library default is 0xFF - all eight - and
+# that is what this receiver has always run on, because the original working
+# receiver never calls the function and every measurement so far said the defaults
+# were fine.
+#
+# Only pipes 0 and 1 are ever used (pipe 0 = left half, pipe 1 = right half), so
+# 0x03 is the value to try. The hypothesis, which nothing here has yet settled:
+# the host spends timeslots on every *enabled* pipe, so on 0xFF a device's turn
+# may come round once per eight pipes instead of once per two. On a 6-channel
+# table that would put the interval between "host listening on this pipe and this
+# channel" at 6 x 8 x 2 = 96 timeslots (~86 ms) rather than 6 x 2 = 12 (~11 ms) -
+# which would mean the transmitters' out-of-sync dwell of 15 timeslots can never
+# be long enough, and every return from silence is a lottery rather than a
+# guaranteed meeting within one rotation. If that is the case, this one line is
+# worth more than anything the transmitters can do.
+#
+# Until it is measured it stays at 0xFF. Both halves are on pipes 0 and 1 either
+# way, so the risk is nil, but changing it at the same time as the transmitters
+# would leave the result unattributable.
+#
+# ---- 2026-09-17, later: reverted to the library default (0xFF) ----
+#
+# This was set to 3 (pipes 0 and 1 only) as a decisive experiment, and typing did
+# measurably improve while it was in force. It is reverted anyway, because the
+# experiment's premise has since been withdrawn: the premise was that the host
+# spends timeslots on every *enabled* pipe, so that a 6-channel rotation over 8
+# pipes put a device's turn 96 timeslots (~86 ms) away - longer than any
+# out-of-sync dwell could reach. That arithmetic was inferred, never measured, and
+# the improvement it "explained" is better explained by the transmitter-side
+# parameters that were also wrong at the time and have now been put back to the
+# values the shipped firmware uses (see tx/board.toml: sync_lifetime 500 -> 30,
+# channel_selection_policy USE_CURRENT -> USE_SUCCESSFUL,
+# timeslots_per_channel_when_out_of_sync 30 -> 15, repeat rate 20 ms -> 5 ms).
+#
+# redox-w-receiver-basic never calls nrf_gzll_set_rx_pipes_enabled(), so it runs
+# on NRF_GZLL_DEFAULT_RX_PIPES_ENABLED = 0x000000FF (nrf_gzll_constants.h:164).
+# Reverting removes one more difference between this receiver and a keyboard known
+# to work, which is the whole point of the exercise.
+#
+# The original reasoning for trying 3 is kept below unedited, because the
+# inference it records is worth recognising later.
+#
+# ---- the experiment, as originally proposed ----
+#
+# The typist reports that a half still stalls for about half a second before
+# recovering. Half a second is a suspiciously round number, and it is exactly the
+# order of "one packet spent its whole 100-attempt window searching" multiplied by
+# the three packets the queue will hold: 3 x 100 timeslots = 270 ms, plus the
+# packet that finally lands. A packet can only burn its whole window if a full
+# sweep of its three channels never finds the host listening on that pipe - and
+# the arithmetic here says how that can happen:
+#
+#   host rotation, if it serves every *enabled* pipe on each channel
+#       = 6 channels x 8 pipes x 2 timeslots = 96 timeslots (~86 ms)
+#   transmitters' out-of-sync dwell
+#       = 15 timeslots (~13.5 ms)
+#
+# 15 can never reach 96, so a searching half always gives up and sweeps again, and
+# only luck (phase alignment) ever lands a packet. That single number would
+# explain why every transmitter-side parameter tried so far changed the symptom
+# so little.
+#
+# 0x03 enables pipes 0 and 1 only - the two that actually have devices - which
+# collapses the same rotation to 6 x 2 x 2 = 24 timeslots (~22 ms). The halves are
+# on pipes 0 and 1 either way, so nothing can break; if the symptom does not
+# change, the hypothesis is dead and the next step is measurement rather than more
+# parameter guesses.
+pipes_enabled = 255
+
+# A half that has not sent for this long has all its keys released, so a lost
+# final packet cannot leave a key stuck down. The transmitters only send on
+# change and go to sleep 0.5 s after the last key, so this must be comfortably
+# longer than that is short - it only ever fires on a half that is really gone.
+link_timeout_ms = 500
+
+# How often the received snapshot is turned into key events. 1 ms is the rate
+# the rest of the system runs at; the radio itself is drained in interrupt
+# context, so this only paces the debouncer and event generation.
+poll_ms = 1
+
+# -----------------------------------------------------------------------------
+# Flash storage for the keymap/Vial settings.
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# DIAGNOSTIC BUILD (temporary): report link stalls as keyboard events.
+#
+# Why this exists
+# ---------------
+# Every conclusion drawn about the 2.4GHz link so far came from reading the SDK
+# documentation and noticing that the symptoms fit - not from a single direct
+# observation. The library exposes no "am I in sync" query, so the stall cannot
+# be seen from the transmitters' side without a probe. It CAN be seen from this
+# side: the receiver knows, to the millisecond, when each half's packets arrive,
+# and a stall is nothing more than a gap in that stream.
+#
+# What it reports
+# ---------------
+# A gap in one half's packet stream that (a) is at least `gap_report_ms` and
+# (b) interrupts a running stream (see `busy_packets`) is reported by pressing a
+# matrix position that has no switch behind it, for `hold_ms`, then releasing it.
+#
+# The positions were chosen for reachability as much as for safety. A report has
+# to travel through the keymap to reach the host, so the position needs a binding
+# - and the binding has to be settable without erasing the keyboard's stored
+# layout, which rules out any cell that vial.json does not list (Vial's GUI can
+# only assign positions its layout file names). The four spare cells in vial.json
+# are these:
+#
+#     (4, 6)  -> F13   left half,  gap >= gap_report_ms
+#     (4, 7)  -> F14   left half,  gap >= gap_severe_ms
+#     (10, 6) -> F15   right half, gap >= gap_report_ms
+#     (10, 7) -> F16   right half, gap >= gap_severe_ms
+#
+# They have no switch, so nothing physical can ever press them, and F13-F16 carry
+# no character - the report cannot disturb typing and cannot be confused with it.
+# `keymap.rs` ships the bindings in its Layer 0 defaults, and because they are
+# ordinary layout cells they can also be set from Vial's GUI without touching
+# anything else. A host-side key logger turns the reports into a stall log.
+#
+# `enabled = false` removes the whole mechanism at compile time: no counters, no
+# events, no output. That is the shipping configuration.
+# -----------------------------------------------------------------------------
+[diagnostics]
+enabled = false
+
+# A gap of at least this long is a stall worth reporting (~150 ms is the
+# shortest interruption a typist reliably notices).
+gap_report_ms = 150
+
+# A gap at least this long is a severe stall. 400 ms is just under the 500 ms
+# after which this receiver gives up on a half and releases its keys, so the two
+# are distinguishable in the log.
+gap_severe_ms = 400
+
+# How long the reported key is held down, so the host cannot miss it.
+hold_ms = 40
+
+# How many packets in a row must have arrived without a gap before a later gap
+# counts as an interruption. Without this, every first keystroke after an idle
+# period (which is always preceded by a long gap) would be reported as a stall.
+busy_packets = 3
+
+# A gap below this is "the stream is running" and extends the run above.
+#
+# This number carries more weight than its size suggests, and 40 ms is not
+# arbitrary - but the arithmetic behind it has changed twice, and the older
+# versions of this comment are worth actively disbelieving. Both were wrong about
+# the transmitters, and a threshold justified by numbers that no longer exist is a
+# threshold nobody can check.
+#
+# ---- as of 2026-09-28, matching tx/board.toml as it currently stands ----------
+#
+# A transmitter re-sends an unchanged state every `debounce_ticks` = 5 passes, and
+# while it is awake a pass is one scan period = 1 ms. So a *typing* half puts a
+# packet on the air every 5 ms no matter how fast the typist is - the stream does
+# not speed up or slow down with the keys. That 5 ms is the rhythm this threshold
+# has to sit above.
+#
+# What happens on a pause is no longer a slower rhythm but an ABSENCE of packets.
+# The repeat path is gated on `!idle || busy`, so once a half has been quiet for
+# `active_release_ms` = 500 ms it stops re-sending altogether, and the idle
+# keepalive that used to fill the silence is off (`keepalive_ms` = 0). The gap
+# after a pause is therefore unbounded and ends at the next key, rather than
+# settling at some longer interval.
+#
+# So a gap can mean two completely different things:
+#
+#   * unbounded, starting right after the typist paused -> the half went idle and
+#     stopped sending. Nothing is wrong; this is a state it was designed to enter.
+#   * tens of ms *in the middle of a running 5 ms stream* -> the link genuinely
+#     stalled, which is the thing this build exists to measure.
+#
+# 40 ms separates them with room to spare: it is eight times the healthy rhythm, so
+# a running stream always extends the run (and three packets establish one in
+# 15 ms), while a pause always breaks it and cannot re-establish it while the half
+# stays idle. The consequence worth remembering when reading the log is unchanged:
+# a report means a RECOVERY - a stall that happened while the half was working and
+# then ended - not merely a quiet keyboard.
+#
+# (For the record, the two earlier justifications were "between a 20 ms typing
+# rhythm and a 200 ms idle one" and, before that, a 10 ms x 20 tick repeat. Every
+# one of those four numbers is gone: the repeat is 5 ticks, an awake pass is 1 ms
+# not 10, release is 500 ms not 200, and an idle half sends nothing at all.)
+#
+# If tx timing changes again - `debounce_ticks`, `scan_hz`, `active_release_ms` or
+# `keepalive_ms` - this threshold and this comment both need re-deriving.
+busy_gap_ms = 40
+
+# How many reports to queue. A burst longer than this is summarised by the
+# counter rather than by more events.
+queue_len = 8
+
+# -----------------------------------------------------------------------------
+# Flash storage for the keymap/Vial settings.
+# -----------------------------------------------------------------------------
+[flash]
+# Everything from here upwards belongs to the factory USB bootloader. Storage
+# must not reach into it - losing the bootloader loses the only way to re-flash
+# this dongle without a debug probe.
+reserved_top = 0xE0000
+
+[storage]
+# MUST start at or after the end of the application region declared above
+# (build.rs enforces both ends). Same placement as the BLE dongle firmware, so
+# the two dongle firmwares share one storage area without either one moving.
+start_addr = 0xA0000
+num_sectors = 6
+
+# -----------------------------------------------------------------------------
+# REG1 (main regulator) mode. "keep" = do not touch the register, i.e. inherit
+# whatever the bootloader left. This dongle's behaviour is verified with that
+# value, so it is stated rather than changed.
+# -----------------------------------------------------------------------------
+[power]
+reg1 = "keep"
+
+# =============================================================================
+#  THE ONE THING NOT TO TAKE FOR GRANTED: the Gazell library version.
+#
+#  build.rs links (nRF5 SDK 17.1.1):
+#      vendor/gzll/gzll_nrf52840_gcc.a  (nRF5 SDK 17.1.1 build, vendored; see
+#      vendor/gzll/README.md)
+#  (override with GZLL_DIR / GZLL_LIB).
+#
+#  SDK 12.3's nRF52 build of the same library services the SECOND pipe
+#  unevenly - measured 150-299 packets/s on pipe 0 against 50-149 on pipe 1 -
+#  which appears as stutter on whichever half is not on pipe 0. Every
+#  parameter, the packet pool, the fetch timing, the debouncing and the event
+#  pipeline were cleared first; none of it mattered, because the library itself
+#  was the only constant. The nRF52840-specific build from SDK 17.1.1 does not
+#  have the fault.
+#
+#  Symbol contract, read out with arm-none-eabi-nm rather than assumed: the
+#  library needs memcpy, memset and the four nrf_gzll_* callbacks from us, and
+#  defines TIMER2_IRQHandler / RADIO_IRQHandler / SWI0_EGU0_IRQHandler itself
+#  (src/gazell.rs bridges the last one's name, which nrf-pac spells EGU0_SWI0).
+# =============================================================================

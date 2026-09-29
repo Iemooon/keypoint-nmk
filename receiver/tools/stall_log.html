@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>KeyPoint NMK 卡顿观测</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    margin: 0; padding: 24px; max-width: 900px;
+  }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #777; }
+  #pad {
+    width: 100%; box-sizing: border-box; min-height: 140px; padding: 12px;
+    font: 15px/1.7 inherit; border: 1px solid #bbb; border-radius: 8px;
+    resize: vertical;
+  }
+  #pad:focus { outline: 2px solid #2b7; border-color: #2b7; }
+  .grid { display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0 8px; }
+  .card {
+    flex: 1 1 150px; border: 1px solid #ccc; border-radius: 8px; padding: 10px 12px;
+  }
+  .card b { display: block; font-size: 26px; font-weight: 600; }
+  .card span { color: #777; font-size: 13px; }
+  .warn { background: #7a2c2c14; border-color: #b55; }
+  table { border-collapse: collapse; width: 100%; margin-top: 14px; font-size: 13px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ddd; }
+  th { color: #777; font-weight: 500; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid #bbb; background: none; cursor: pointer; }
+  button:hover { background: #8881; }
+  #hint { color: #a60; font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>KeyPoint NMK — 2.4G 链路卡顿观测</h1>
+<p class="sub">
+  诊断固件把「某半的包流被打断」变成一次按键：F13/F14 = 左半，F15/F16 = 右半。
+  F13/F15 是 150ms 以上的停顿，F14/F16 是 400ms 以上的停顿。
+</p>
+
+<p><b>请在下面的框里正常打字。</b> 焦点必须停在这个框上，页面才能收到 F13–F16。</p>
+<textarea id="pad" placeholder="在这里连续打字，尽量快，打你平时写的东西。感觉卡顿的时候不用停，打完再看下面的记录。"></textarea>
+<div id="hint">还没有收到任何报告。</div>
+
+<div class="grid">
+  <div class="card"><b id="c13">0</b><span>F13 左半 ≥150ms</span></div>
+  <div class="card"><b id="c14">0</b><span>F14 左半 ≥400ms</span></div>
+  <div class="card"><b id="c15">0</b><span>F15 右半 ≥150ms</span></div>
+  <div class="card"><b id="c16">0</b><span>F16 右半 ≥400ms</span></div>
+</div>
+
+<table id="log">
+  <thead><tr><th>#</th><th>时间（相对开始）</th><th>报告</th><th>间隔</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<p style="margin-top:16px">
+  <button id="clear">清空</button>
+  <button id="csv">导出 CSV</button>
+</p>
+
+<script>
+// The four report keys, and what each one means. Everything else is typing and
+// is left alone - including the textarea's own content.
+const REPORT = {
+  F13: { key: "F13", half: "左", sev: "≥150ms" },
+  F14: { key: "F14", half: "左", sev: "≥400ms" },
+  F15: { key: "F15", half: "右", sev: "≥150ms" },
+  F16: { key: "F16", half: "右", sev: "≥400ms" },
+};
+const counts = { F13: 0, F14: 0, F15: 0, F16: 0 };
+const rows = [];
+let t0 = null, last = null;
+
+const pad = document.getElementById("pad");
+const tbody = document.querySelector("#log tbody");
+const hint = document.getElementById("hint");
+
+function fmt(ms) {
+  const s = ms / 1000;
+  return `${Math.floor(s / 60)}:${(s % 60).toFixed(3).padStart(6, "0")}`;
+}
+
+// Report keys are recognised by `key` and by `keyCode`: browsers differ on what
+// they populate for F13–F24 (Chrome gives "F13"/124, some give "Unidentified"
+// with the legacy code still set), and a report must never be missed.
+function reportOf(e) {
+  if (REPORT[e.key]) return REPORT[e.key];
+  const byCode = { 124: "F13", 125: "F14", 126: "F15", 127: "F16" }[e.keyCode];
+  return byCode ? REPORT[byCode] : null;
+}
+
+pad.addEventListener("keydown", (e) => {
+  const r = reportOf(e);
+  if (!r) return;              // ordinary typing
+  e.preventDefault();          // a report is not input
+
+  const now = performance.now();
+  if (t0 === null) t0 = now;
+  const at = now - t0;
+  const gap = last === null ? null : at - last;
+  last = at;
+
+  counts[r.key]++;
+  document.getElementById("c" + r.key.slice(1)).textContent = counts[r.key];
+
+  rows.push({ at, gap, r });
+  const tr = document.createElement("tr");
+  tr.innerHTML =
+    `<td>${rows.length}</td>` +
+    `<td>${fmt(at)}</td>` +
+    `<td>${r.key}（${r.half}半 ${r.sev}）</td>` +
+    `<td>${gap === null ? "—" : Math.round(gap) + " ms"}</td>`;
+  tbody.appendChild(tr);
+
+  hint.textContent = `已收到 ${rows.length} 次报告。`;
+  hint.style.color = "#777";
+}, true);
+
+document.getElementById("clear").onclick = () => {
+  counts.F13 = counts.F14 = counts.F15 = counts.F16 = 0;
+  for (const k of ["13", "14", "15", "16"]) document.getElementById("c" + k).textContent = "0";
+  rows.length = 0; tbody.innerHTML = ""; t0 = last = null;
+  hint.textContent = "已清空。";
+};
+
+document.getElementById("csv").onclick = () => {
+  if (!rows.length) return;
+  const lines = ["n,ms_from_start,key,half,severity,ms_since_prev_report"];
+  rows.forEach((x, i) => {
+    lines.push([i + 1, Math.round(x.at), x.r.key, x.r.half, x.r.sev,
+                x.gap === null ? "" : Math.round(x.gap)].join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "keypoint-nmk-stalls.csv";
+  a.click();
+};
+
+pad.focus();
+</script>
+</body>
+</html>

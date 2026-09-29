@@ -1,0 +1,745 @@
+# =============================================================================
+#  board.toml - THE single source of truth for the KeyPoint 2.4GHz TRANSMITTER.
+#
+#  One file describes the whole keyboard - both halves - and build.rs turns it
+#  into:
+#
+#    - $OUT_DIR/board_generated.rs : pin constructors + geometry + radio params
+#    - $OUT_DIR/memory.x           : the linker layout
+#
+#  Porting this firmware to another keyboard means editing THIS FILE (and, if
+#  the keymap shape changes, nothing else - the receiver's own board.toml
+#  describes the same keyboard from the other side). Nothing about pins,
+#  geometry or radio parameters is hardcoded in the Rust sources.
+#
+#  Every value below was taken from `keypoint-rmk-dongle` (src/left.rs:170,
+#  src/right.rs:168, memory-halves.x) - the working KeyPoint firmware - so this
+#  transmitter drives the same hardware pins the same way.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Chip. build.rs cross-checks this against the cargo feature you build with
+# (default `nrf52840`); `--no-default-features --features nrf52833` builds for
+# the smaller part.
+#
+# Chips this firmware can target: anything with the RADIO peripheral Gazell is
+# built for, i.e. nRF52840 / nRF52833 / nRF52832 (SDK 17.1.1 ships
+# gzll_nrf52840_gcc.a, gzll_nrf52_gcc.a and gzll_nrf51_gcc.a; the archive is
+# selected by [gazell] library below). No USB is involved, so there is no
+# USB-controller restriction here the way there is on the receiver.
+# -----------------------------------------------------------------------------
+[chip]
+name = "nrf52840"
+
+[memory]
+# KeyPoint halves carry an Adafruit-style UF2 bootloader; the application slot
+# starts at 0x1000 (same figure memory-halves.x uses - it is what the working
+# RMK images link to).
+flash_origin = 0x00001000
+flash_length = "1020K"
+ram_origin = 0x20000008
+ram_length = "255K"
+
+# -----------------------------------------------------------------------------
+# Matrix geometry, per half.
+# -----------------------------------------------------------------------------
+[matrix]
+rows = 6
+cols = 8
+# The report is ONE BITMAP of the cells, bit `row * cols + col`, rows
+# concatenated. The link therefore bounds rows * cols (<= 256, which is Gazell's
+# 32-byte payload), not either dimension on its own - build.rs refuses a
+# geometry that does not fit, with the size table in its message.
+#
+# With 8 columns the bitmap is byte-for-byte the "one byte per row" layout this
+# firmware used to send, so KeyPoint's packets are unchanged and a wider keyboard
+# is an edit here rather than a protocol change. tools/verify_matrix_bitmap.py
+# checks both halves of that claim.
+#
+# Diode direction, i.e. which side is driven and which side is read:
+#   "col2row" (default) : columns are driven high, rows are read, rows pull DOWN
+#   "row2col"           : rows are driven high, columns are read, columns pull DOWN
+# A pressed key reads high in both cases; the difference is only which pin list
+# becomes outputs. KeyPoint is col2row - the same convention the working
+# keypoint-rmk-dongle firmware uses (`Matrix::<_, _, _, 6, 8, true>`, whose last
+# parameter is RMK's COL2ROW) and the same one redox-w-keyboard-basic drives.
+diode = "col2row"
+# Delay between driving a line high and reading the other side, in CPU cycles
+# (64 MHz -> 16 cycles = 0.25 us).
+#
+# A pressed key connects the driven line straight to the read line through the
+# diode, so the read line is charged by the driving pin and a fraction of a
+# microsecond is enough - the original firmware relied on a single `nop`, i.e.
+# 16 ns on its 16 MHz part.
+#
+# 16 cycles is the ported value, and it is back after a detour. It was raised to
+# 240 while chasing "I have to press a key several times", on the theory that the
+# scan was reading before the level had settled. That symptom turned out to be
+# SYSTEMOFF waking up by RESET, which loses the key outright (see README, "Idle
+# behaviour") - the scan was never the problem. 240 cycles is ~3.7 us per column,
+# ~30 us per scan: not fatal at 1 kHz, but it costs current and shortens the gap
+# between scans for nothing.
+settle_cycles = 16
+
+# -----------------------------------------------------------------------------
+# The knob.
+#
+# The two pins themselves are per-half (see [left]/[right]); everything about how
+# to READ them is the same on both halves, which is why it lives here.
+# -----------------------------------------------------------------------------
+[encoder]
+# Quadrature state transitions per detent: how many quarter-steps of the two
+# contacts make one "click" of the knob.
+#
+# 4. This is ZMK's own value for this keyboard (`resolution = <4>`), and RMK's
+# decoder is built the same way (`ResolutionPhase::new(resolution, reverse)`, four
+# transitions per detent), so the transmitter and the receiver agree by
+# construction rather than by luck. The part is an EC11 with 20 detents per turn
+# (`steps = <20>`).
+#
+# It is a property of the part, not a preference: lower it and contact bounce
+# turns into extra clicks, raise it and real clicks get swallowed.
+#
+# The DIRECTION, by contrast, is per half - see encoder_reverse under [left] and
+# [right]. The two knobs are mounted mirrored, so they genuinely turn opposite
+# ways, and a single shared setting cannot describe both.
+resolution = 4
+
+# -----------------------------------------------------------------------------
+# Per-role parameters. THIS is what makes one board.toml describe two firmwares.
+#
+# The two halves must differ in BOTH their pipe and their channel subset: Gazell
+# hosts identify a device by a full on-air address (prefix byte + base address),
+# pipe 0 is the only pipe that can carry base_address_0, and two devices sharing
+# an address cannot be told apart - their packets overwrite each other in the
+# same pipe. The channel subsets are halves of the receiver's table, which is
+# what makes the receiver's 6-entry rotation twice as long as either
+# transmitter's 3-entry one (see the receiver's board.toml for why that matters).
+# -----------------------------------------------------------------------------
+[left]
+# Gazell pipe this half transmits on.
+pipe = 0
+# Must be a subset of the receiver's [gazell] channel_table.
+channel_table = [15, 47, 71]
+# Row pins, in matrix row order (row 0 first).
+row_pins = ["P0_24", "P0_17", "P0_16", "P1_08", "P0_31", "P0_29"]
+# Column pins, in matrix column order (column 0 first).
+col_pins = ["P0_13", "P0_15", "P0_19", "P0_22", "P0_20", "P1_00", "P0_28", "P0_30"]
+# Quadrature encoder pins - two pins that are NOT part of the matrix. The knob has
+# its own two contacts, so the transmitter reads them on their own and does not
+# see them in any scan.
+#
+# Taken from ZMK's definition for this board (config/boards/arm/zitaotech_keypoint/
+# zitaotech_keypoint.dtsi, `left_encoder`, `resolution = <4>` `steps = <20>`):
+#
+#     a-gpios = <&gpio0 14 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+#     b-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+#
+# a and b are NOT interchangeable: swapping them reverses the knob.
+encoder_a = "P0_14"
+encoder_b = "P0_11"
+# false here, where the right half is true: the two knobs are mounted as mirror
+# images of each other, so the same quadrature direction means opposite things on
+# the two sides. Taken from the BLE firmware's `RotaryEncoder::with_resolution(
+# pin_a, pin_b, 4, false, 0)` for this side - not from symmetry, not guessed.
+encoder_reverse = false
+
+# ---- the pointing device: the A320 trackpad --------------------------------
+#
+# `pointer_kind` picks the driver. The two devices share the bus and nothing else:
+#
+#   trackpoint : a PS/2-to-I2C bridge. Fixed 7-byte packet, magic byte, and no
+#                writes at all - the whole transaction is one read.
+#   a320       : a register interface. One byte is written first to point at the
+#                motion register, then three bytes are read back.
+#
+# TWISPI0, copied from the BLE firmware that ran on this exact hardware:
+#
+#     left.rs: "A320 trackpad: TWISPI0 on SDA P0.26 / SCL P0.04, MOTION P0.08"
+#
+# These are the RIGHT half's knob pins (this half's are P0_14/P0_11) - the two
+# halves are separate chips, so the same pin number means a different thing on
+# each. build.rs checks the pair against THIS half's matrix and knob only.
+#
+# MOTION (P0.08) is deliberately not listed, same as on the right: the first
+# version polls, and the pad reports at about 40 Hz anyway.
+pointer_kind = "a320"
+pointer_sda = "P0_26"
+pointer_scl = "P0_04"
+# The pad's supply switch, ACTIVE LOW: this is ZMK's own `EXT_POWER` gate for this
+# half, `control-gpios = <&gpio0 2 GPIO_ACTIVE_LOW>`, and the switch is on [pointer]
+# above. Nothing on this half uses P0.02 otherwise - its own battery divider is on
+# P0_03 - so there is no conflict to check.
+#
+# NOT CONFIRMED ON HARDWARE, and unlike the right half it was not confirmed by the
+# keyboard's designer either: ZMK describes this as the board's external-power rail
+# and it is not recorded anywhere whether that rail feeds the pad, the panel, or
+# both. Pressing the switch will answer it - if the panel is what goes dark, this
+# is the panel's rail, and the honest fix is to drop this line rather than to ship a
+# switch that does the opposite of its name.
+pointer_power = "P0_02"
+# The two switch keys, in WHOLE-KEYBOARD coordinates: the left half owns rows 0..5
+# and the right half rows 6..11, because the receiver joins the two bitmaps along
+# rows. build.rs converts these to this half's own rows, so the numbers here are the
+# numbers the keymap and Vial use.
+#
+#   pointer_power_key - switch the pad's supply off and on.
+#   pointer_mode_key  - switch what the pad's movement MEANS: cursor, or wheel.
+#                       Latching, not momentary: one press is scroll, the next is
+#                       back to the cursor. The receiver applies it to this half's
+#                       device only, and it rides in every packet, so the two ends
+#                       cannot disagree about it.
+#
+# Both are plain matrix cells, so they are also keys as far as the receiver is
+# concerned: set them to `No` in Vial (or nothing) or they will type as well as
+# switch. The half cannot suppress that - the link is one-way and the keymap is on
+# the other side.
+pointer_power_key = [4, 6]
+pointer_mode_key = [4, 7]
+
+# The four cells that put this half into its bootloader, in the same
+# whole-keyboard coordinates as the two keys above. All four must go down within
+# `[dfu] window_ms` - see src/dfu.rs for what happens after that, and why nothing
+# is held back from the host while it happens.
+#
+# The corners of the typing block rather than of the whole half: the outermost row
+# is where the thumbs rest, and this gesture is not one that should be reachable
+# by accident.
+dfu_combo = [[0, 0], [0, 5], [3, 0], [3, 5]]
+
+# ---- the status panel: JDI LPM009M360A --------------------------------------
+#
+# SPI2, 4 MHz, mode 0, no MISO. Taken from the BLE firmware that ran on this
+# exact hardware:
+#
+#     left.rs: "Left panel: SPI2 on SCK P0.27 / MOSI P0.05, active-high CS on
+#               P0.12"
+#
+# CS is ACTIVE HIGH (ZMK's `GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN`); the driver
+# handles that, it is not a pin property here.
+#
+# READ THE BISECT NOTE IN src/screen/mod.rs BEFORE WIRING THIS BACK UP. These
+# pins are currently driven exactly once per boot and never again, on purpose.
+screen_sck = "P0_27"
+screen_mosi = "P0_05"
+screen_cs = "P0_12"
+
+# The battery divider's sense line. Same hardware as the BLE firmware, and the
+# same pin it used there: a divided battery voltage on an ADC pin, not the
+# internal VDD - so the reading is of the real cell, not of the regulator.
+#
+# Read only by the panel path (see src/screen/mod.rs), one conversion at a time,
+# in the screen task - never in the typing loop, so the ADC cannot delay a key.
+battery_adc = "P0_03"
+
+[right]
+pipe = 1
+channel_table = [31, 57, 81]
+row_pins = ["P1_10", "P1_15", "P0_28", "P0_30", "P0_12", "P1_09"]
+col_pins = ["P0_03", "P1_14", "P0_31", "P0_29", "P1_13", "P1_11", "P0_05", "P0_27"]
+# See the left half's note. ZMK's `right_encoder` is:
+#
+#     a-gpios = <&gpio0 26 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+#     b-gpios = <&gpio0 4  (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+encoder_a = "P0_26"
+encoder_b = "P0_04"
+# true, where the left half is false: the two knobs are mounted as mirror images,
+# so the same quadrature direction means opposite things on the two halves. Taken
+# from the BLE firmware's `RotaryEncoder::with_resolution(pin_a, pin_b, 4, true, 1)`
+# for this side - not from symmetry, and not guessed.
+encoder_reverse = true
+
+# ---- the pointing device: the TrackPoint nub --------------------------------
+#
+# TWISPI0, and both pins are chosen by PSEL - the peripheral can be routed to any
+# GPIO, so nothing here follows from the chip. These are copied from the BLE
+# firmware, which ran on this exact hardware:
+#
+#     right.rs: "TrackPoint: TWISPI0 on SDA P0.14 / SCL P1.08, MOTION on P0.07"
+#
+# MOTION is listed here now, and it earns its place: it is what makes the gap
+# between two packets a real measurement rather than "whatever the poll timer
+# happened to be". The acceleration curve divides distance by that gap, and a
+# half that reads on a fixed beat reports every movement as a fast one - see
+# `TrackPoint::poll`. Every read is now one the device asked for.
+#
+# The line is active low with the bridge holding it up, which is what ZMK's
+# `GPIO_ACTIVE_LOW | GPIO_PULL_UP` on this same pin says.
+#
+# Neither pin is in this half's matrix or on its knob, and build.rs refuses the
+# build if that ever stops being true.
+pointer_motion = "P0_07"
+# `pointer_kind` picks the driver - see the left half's note for what the two
+# speak. This side is the nub.
+pointer_kind = "trackpoint"
+pointer_sda = "P0_14"
+pointer_scl = "P1_08"
+# The nub's supply switch, ACTIVE LOW. This one IS confirmed: ZMK's board definition
+# carries `EXT_POWER { control-gpios = <&gpio0 8 GPIO_ACTIVE_LOW>; }` for this half,
+# and the keyboard's designer has confirmed since that P0.08 drives the nub's supply
+# through a MOSFET. Low = the MOSFET conducts = the nub is powered.
+#
+# It is why the drain this exists to stop is stoppable at all: the nub's bridge and
+# sensor draw a milliamp or two whenever they have power, and no I2C command turns
+# them off - the protocol is read-only. Removing the supply is the only switch there
+# is.
+#
+# MOTION is P0_07 on this half, so P0_08 was free; build.rs refuses the build if
+# that ever stops being true.
+pointer_power = "P0_08"
+# The two switch keys, whole-keyboard coordinates - see the left half's note for what
+# each one does. The pair is mirrored relative to the left half: here the POWER
+# switch is the inner one ([10, 7]) and the mode switch is the outer one ([10, 6]),
+# which is the other way round from the left half's [4, 6] / [4, 7].
+pointer_power_key = [10, 7]
+pointer_mode_key = [10, 6]
+
+# See the left half's note: local rows 0..6 of this half, i.e. whole-keyboard rows
+# 6..12. Same cells on both halves, counted from each half's own top-left.
+dfu_combo = [[6, 0], [6, 5], [9, 0], [9, 5]]
+
+# ---- the status panel: JDI LPM009M360A --------------------------------------
+#
+# SPI2, 4 MHz, mode 0, no MISO. From the BLE firmware:
+#
+#     right.rs: "Right panel: SPI2 on SCK P0.15 / MOSI P0.17, active-high CS on
+#                P0.13"
+#
+# Note P0_17 is the LEFT half's row 1, and P0_14/P0_26 are its pointer and knob
+# pins. Not a conflict: the halves are separate chips, so a pin number means a
+# different thing on each. READ THE BISECT NOTE IN src/screen/mod.rs FIRST.
+screen_sck = "P0_15"
+screen_mosi = "P0_17"
+screen_cs = "P0_13"
+
+# See the left half's note. Different pin because the two halves mirror each
+# other: P0_03 is a matrix column on this half, so the divider is on P0_02.
+battery_adc = "P0_02"
+
+# -----------------------------------------------------------------------------
+# Switches for the pointing device itself.
+#
+# The two KEYS live in each half's own section, because they are not in the same
+# place on the two boards (the right pair is mirrored relative to the left one).
+# What is here is the policy that is the same on both.
+#
+#   idle_off_ms - how long a half may sit with no input at all before it cuts its
+#                 pointing device's power by itself. 0 disables it and leaves the
+#                 manual key as the only way. Any key or knob turn brings it back,
+#                 so the cost of a small number is "press a key before the pointer
+#                 answers"; the cost of a large one is the drain it was supposed to
+#                 stop. 60 s is a first guess, not a measurement.
+#
+# The device is switched off by removing its supply, not by pretending to ignore
+# it: the gate is a MOSFET that the keyboard's designer wired to exactly this
+# purpose (P0.08 on the right half - see [right]). A half whose pointer has no gate
+# can say nothing here and still gets the software half of this, which stops the
+# bus traffic but not the device's own quiescent draw.
+[pointer]
+idle_off_ms = 60000
+
+# -----------------------------------------------------------------------------
+# 2.4GHz Gazell link. These MUST match the receiver exactly - a wrong value here
+# looks exactly like "no link at all".
+# -----------------------------------------------------------------------------
+[gazell]
+# Which precompiled library to link, and where from. Overridable with the
+# GZLL_DIR / GZLL_LIB environment variables.
+#
+#   gzll_nrf52840_gcc.a : nRF52840 (this board)
+#   gzll_nrf52_gcc.a    : nRF52833 / nRF52832
+#   gzll_gcc.a          : nRF51822 (the original keyboard's chip)
+#
+# The library VERSION cost the receiving side days: SDK 12.3's nRF52 build
+# services the second pipe unevenly. This firmware uses SDK 17.1.1, whose
+# nRF52840 build is the one verified working.
+#
+# The transmitter uses the DEVICE role, where that fault could not have shown up
+# the same way - but there is no reason to link a library known to be faulty,
+# and both sides of this link should be built from the same SDK.
+library = "gzll_nrf52840_gcc.a"
+library_dir = "../vendor/gzll"
+
+datarate = "1mbit"
+timeslot_period_us = 900
+
+# ---- DEVICE-side parameters. The receiver does NOT set these (it is the host);
+# the original transmitter sets exactly these three, so this does too.
+#
+# max_tx_attempts: how many times one packet is retried before it is dropped.
+#
+# 100 - back to the original's value, and now for a measured reason rather than
+# for fidelity.
+#
+# This is the number of timeslots a packet may be attempted, and it is what
+# decides whether a device that has lost sync can find the host again. From the
+# library's own constants (nrf_gzll_constants.h):
+#
+#   NRF_GZLL_DEFAULT_TIMESLOTS_PER_CHANNEL_WHEN_DEVICE_OUT_OF_SYNC = 15
+#   NRF_GZLL_DEFAULT_CHANNEL_TABLE_SIZE                           = 6
+#
+# so an out-of-sync device dwells 15 timeslots on each of 6 channels: 90 timeslots
+# to sweep the host's whole table once, ~81 ms at 900 us. With this set to 2, a
+# packet could look at 2 of those 90 positions - it stayed in sync only by luck,
+# and the moment the host moved to another channel the half went quiet. That is
+# the "a few characters and then it locks up" symptom, and it was this line.
+#
+# 100 covers one full sweep with a little to spare, which is exactly why the
+# original transmitter uses it. A packet in sync still costs one timeslot; only a
+# packet that is searching costs the full window, and searching is what we want it
+# doing.
+max_tx_attempts = 100
+# timeslots_per_channel: how long the DEVICE stays on one channel while it is in
+# sync. 4 is the working transmitter's value.
+timeslots_per_channel = 4
+
+# timeslots_per_channel_when_out_of_sync: the same, for a device that has lost
+# the host.
+#
+# ---- 2026-09-17, reverted to the working transmitter's value ----
+#
+# redox-w-keyboard-basic never calls nrf_gzll_set_timeslots_per_channel_when_-
+# device_out_of_sync(), so it runs on the library default:
+#
+#     NRF_GZLL_DEFAULT_TIMESLOTS_PER_CHANNEL_WHEN_DEVICE_OUT_OF_SYNC = 15
+#     (nrf_gzll_constants.h:175)
+#
+# This file carried 30 for a while, on the reasoning that the dwell has to exceed
+# one host rotation and that the rotation is 6 channels x 2 pipes x 2 timeslots =
+# 24. That reasoning is now withdrawn, for two reasons:
+#
+#   * The rotation arithmetic was never measured, it was inferred - and it was
+#     inferred twice, to two different answers (12, then 24). A parameter derived
+#     from a number that keeps changing is not derived from anything.
+#   * 15 is what a shipped, widely used keyboard runs on, against the same
+#     library, with the same 3-channel device table and 6-channel host table. It
+#     does not stutter. Whatever the rotation really is, 15 clears it.
+#
+# The correct reading of this parameter is therefore not "compute the rotation and
+# add margin" but "use the value the working firmware uses".
+timeslots_per_channel_when_out_of_sync = 15
+
+# How long the library keeps believing the link is synchronized after a packet
+# gets through, in timeslots (`nrf_gzll_set_sync_lifetime`). At 900 us a timeslot,
+# 500 is ~450 ms.
+#
+# ---- the library default, for reference ----
+#
+#     NRF_GZLL_DEFAULT_SYNC_LIFETIME
+#       = 3 * NRF_GZLL_DEFAULT_CHANNEL_TABLE_SIZE * NRF_GZLL_DEFAULT_TIMESLOTS_PER_CHANNEL
+#       = 3 * 5 * 2 = 30 timeslots (~27 ms)
+#     (nrf_gzll_constants.h:176, with :134 and :171 for the two factors)
+#
+# Note the two factors are the *defaults*, not this board's settings - the macro
+# is resolved at library build time, so the 3-channel table and the
+# timeslots_per_channel of 4 set above do not change it. (An earlier comment here
+# said 36; that came from assuming a table size of 6, which is not the default.)
+#
+# ---- 2026-09-17: reverted from 500 to the default of 30 ----
+#
+# The reason was that redox never calls this, and the rule being applied was "use
+# the value the working firmware uses". That reversion was correct AT THE TIME and
+# is worth keeping on the record, because the argument that undid it below is not
+# "the old argument was wrong" - it is "the premise the old argument rested on has
+# since been removed".
+#
+# ---- 2026-09-28: back to 500, because keepalive_ms went to 0 ----
+#
+# What changed is that this parameter stopped being dead. `sync_lifetime` only
+# matters once the link can go quiet long enough for it to expire, and until this
+# week it could not: redox's `handle_send` runs on every tick and re-offers an
+# unchanged state every `debounce_ticks`, which is a keepalive whether it is called
+# one or not. A transmitter that never stops sending never lets the counter reach
+# 30, so 30 and 500 were indistinguishable and copying the reference was free.
+#
+# `keepalive_ms = 0` removed that. This half now goes silent the moment it goes
+# idle, the counter runs down unopposed, and 27 ms later the link is out of sync -
+# so EVERY first key after a pause of more than 27 ms pays a full re-search:
+# `timeslots_per_channel_when_out_of_sync` (15) x this half's 3 channels = 45
+# timeslots = 40.5 ms, on top of the 8.9 ms the rest of the chain costs. That is
+# the single largest term in this keyboard's typing latency, and it is a term the
+# keepalive used to pay for with ~200 uA of idle current.
+#
+# This parameter pays for it with NOTHING. It is a count of timeslots the library
+# keeps in its own state; holding sync longer does not transmit, does not receive,
+# and does not keep any peripheral awake that is not awake already (the timeslot
+# timer runs regardless, because `radio_off_when_idle` is false - see the note on
+# `nrf_gzll_disabled()` in nrf_gzll.h:328). The original reason for 500, recorded
+# in src/gazell.rs, also still stands and is now stronger: one packet may retry for
+# up to `max_tx_attempts` (100) timeslots = 90 ms, which is longer than a 27 ms
+# sync lifetime, so a single lost packet used to be enough to demote the half to a
+# re-search.
+#
+# The general lesson, since it will apply to every other parameter in this file:
+# a value copied from a reference implementation is only valid under that
+# implementation's premises. redox runs at 30 because redox never stops
+# transmitting. This half does stop, so this half has to answer the question again.
+#
+# ---- why 500 and not larger: two ceilings ----
+#
+# 1. CRYSTAL DRIFT. Both ends count timeslots on their own clocks. At ~60 ppm a
+#    900 us slot accumulates ~54 us of disagreement per 1000 slots, against a slot
+#    that is 900 us long and a packet that occupies ~200 us of it. 500 slots is
+#    ~27 us and comfortably inside that; 3000 would be ~162 us and is not obviously
+#    so. This bounds the parameter from above on physics, not on taste.
+#
+# 2. SELF-HEAL AFTER A HOST RESTART. If the receiver restarts (replug, or a host
+#    that resumes from sleep) while a half does not, the half keeps believing a
+#    timeslot alignment that no longer exists and transmits into it. Recovery is
+#    NOT handled by `QUEUE_STUCK_MS`: `max_tx_attempts` = 100 means a packet is
+#    retried for 90 ms before `tx_failed` fires, so the callback counters keep
+#    moving and the "occupied AND silent" test never trips. The half recovers when
+#    this counter expires instead - so `sync_lifetime` IS the outage, in timeslots.
+#    500 (~450 ms) is inside the one-second bound this project holds itself to;
+#    3000 (~2.7 s) is not, which is the real reason the value stops here.
+#
+# What 500 buys: it covers every ordinary gap in typing - between words, between
+# sentences, a pause to think - so the first key after one costs the same 8.9 ms as
+# a key in the middle of a run, instead of 49.5 ms. Longer pauses still pay the
+# search, and still should: a half that has been silent for minutes ought not to
+# assume the host is where it left it.
+sync_lifetime_timeslots = 500
+
+# Which channel a new packet starts on (see the policy enum in nrf_gzll.h).
+#   0 = USE_SUCCESSFUL (library default): always start on the channel of the last
+#       successful packet; if in sync, wait until the host monitors that channel.
+#   1 = USE_CURRENT: transmit on the channel the host is monitoring right now.
+#
+# ---- 2026-09-17, reverted to the library default ----
+#
+# redox never calls nrf_gzll_set_device_channel_selection_policy(), so it runs on
+# USE_SUCCESSFUL (NRF_GZLL_DEFAULT_DEVICE_CHANNEL_SELECTION_POLICY,
+# nrf_gzll_constants.h:172).
+#
+# USE_CURRENT was adopted here on the argument that "the channel the host is
+# monitoring now" is obviously where a packet should go. Reading the enum
+# documentation again, that argument misses what USE_SUCCESSFUL does: when in
+# sync it *waits until the host is monitoring that channel* before transmitting.
+# Waiting for the right moment is not the same as guessing at the current one, and
+# the shipped firmware waits. Reverted.
+channel_selection_policy = 0
+
+base_address_0 = 0x01020304
+base_address_1 = 0x05060708
+
+# Crystal control. "auto" (the default, and what the original transmitter runs
+# on) lets Gazell power the 32 MHz crystal down between timeslots - which is
+# exactly what is wanted here: this firmware has no USB and no BLE, so nothing
+# else needs the crystal. "manual" is only needed where USB shares the crystal
+# (the receiver does that, not this).
+xosc_ctl = "auto"
+
+# Keep the radio listening while the half is idle?
+#
+# false (current): the radio stays enabled for as long as the half has power, and
+#   going idle only drops the scan rate. This is precisely what the original
+#   transmitter does - it enables Gazell once, in main(), and never touches the
+#   radio again until SYSTEMOFF resets the chip - and it is the current setting
+#   because switching the radio off at runtime is what made this half lock up.
+#
+# true: the radio is disabled when the half goes idle (after the FIFO is flushed)
+#   and enabled again by the first press. It saves the periodic receive current -
+#   tens to hundreds of uA, the largest part of what is left once the 1 kHz scan
+#   is gone - at the cost of 1..11 ms of re-acquisition. Measured on this
+#   keyboard, that is the wrong trade: it works for a while and then the half
+#   goes silent entirely after roughly 30-40 keypresses, with nothing short of a
+#   power cycle bringing it back. Nothing of the sort exists in the original
+#   firmware, which never disables, re-enables or flushes anything while it runs,
+#   so the likeliest cause is the library being driven through state transitions
+#   the original never exercises. Treat this as an experiment, not a setting.
+radio_off_when_idle = false
+
+# -----------------------------------------------------------------------------
+# Timing.
+# -----------------------------------------------------------------------------
+[timing]
+# Matrix scan rate. The tick is the unit every other number below is counted in.
+scan_hz = 1000
+# Send only after the key state has been unchanged for this many ticks.
+#
+# This is the whole debounce AND the repeat rate: a change restarts the count, a
+# stable state is transmitted once every `debounce_ticks` ticks. The original
+# transmitter is written the same way, and the repetition is not optional - it is
+# what keeps the receiver's link alive while a key is held (the receiver releases
+# a half whose packets stop arriving) and what repairs a packet lost in either
+# direction.
+debounce_ticks = 5
+# --- idle behaviour: shallow sleep, NOT SYSTEMOFF ---
+#
+# Measured on this keyboard: SYSTEMOFF is exited by a RESET, so every key pressed
+# after the timeout paid for the entire restart - bootloader, clocks, radio init,
+# re-acquiring the host - tens of milliseconds. Fast typing never noticed it (the
+# chip was already awake); every deliberate pause did. And a tap shorter than
+# that restart window was not merely delayed, it was LOST: the matrix is sampled
+# as a level, not captured as an event, so by the time the chip is running again
+# the key has been released and no scan ever sees it.
+#
+# So the chip stays in System ON and simply stops being busy:
+#
+#   * while keys are being pressed it scans at scan_hz and keeps sending;
+#   * once nothing has been pressed for active_release_ms it drops to
+#     idle_poll_ms - still sampling, so a press is still caught, just sooner or
+#     later within one poll period;
+#   * with [gazell] radio_off_when_idle the radio is switched off while idle and
+#     switched back on by the first press.
+#
+# The idle current that SYSTEMOFF bought was ~1 uA. The 1 kHz polling loop that
+# this replaces was worth tens to hundreds of uA - i.e. the expensive part was
+# never the idle state, it was the scanning.
+#
+# Two dials, in opposite directions:
+#   idle_poll_ms      smaller = the matrix is read sooner after a pause, at more
+#                     idle current (10 ms costs a few uA total; 1 ms costs
+#                     ~100 uA). It is the MATRIX scan that slows down for this -
+#                     the pass itself and the knob's sampling stay at scan_hz
+#                     either way, because a detent only lasts a few milliseconds
+#                     (see the note below).
+#   active_release_ms smaller = back to low power sooner, but typing with short
+#                     gaps pays a wake-up on the first key of each gap
+#
+# ---- 2026-09-17: active_release_ms 200 -> 500, to match the original ----
+#
+# redox-w-keyboard-basic/main.c:
+#
+#     #define INACTIVITY_THRESHOLD 500 // 0.5sec
+#
+# counted in 1 kHz ticks, i.e. the original transmitter keeps running at full rate
+# for half a second after the last key before it does anything about idleness.
+# This board said 200 ms, which is a departure with no reason behind it - and a
+# departure in the expensive direction, because every keystroke after a pause of
+# more than 200 ms arrives while the scan rate is already down, while the original
+# tolerates pauses up to five times as long at full rate.
+#
+# 500 ms is the original's number. idle_poll_ms stays at 10: that dial has no
+# counterpart in the original (it goes to SYSTEMOFF instead, which this board
+# cannot afford - see above), and 10 ms was chosen on current, not on feel.
+#
+# 2026-09-17: the knob changed what this number means. While idle it now stretches
+# only the MATRIX scan; the pass itself and the knob's sampling stay at scan_hz,
+# because a detent is four quadrature steps and a quick hand covers them in a few
+# milliseconds - a 10 ms tick steps straight over whole detents, which is a knob
+# that drops the step after every pause. The current cost quoted above is the
+# matrix scan's, and that is still exactly what this number buys.
+# ---- 2026-09-27: 10 -> 2 ----
+#
+# The idle poll is the only delay on the FIRST key of a burst that this half
+# controls: a press that lands just after a scan waits out the rest of the period.
+# 10 ms spent a few uA to make that worst case 10 ms; 2 ms spends five times the
+# wake-ups, and the matrix scan with them, to make it 2 ms. Same dial, opposite
+# direction from active_release_ms - and the one to put back first if standby
+# current turns out to matter more than the first key of a burst.
+idle_poll_ms = 2
+active_release_ms = 500
+
+# ---- idle keepalive: what the reference transmitter does and this one did not ----
+#
+# Nothing has been sent while idle since the beginning, and that is a departure
+# from the implementation this file is copied from. redox-w-keyboard-basic/main.c:
+#
+#     static void handle_send(const uint8_t* keys_buffer)
+#     {
+#         static uint8_t keys_snapshot[ROWS] = {0};
+#         static uint32_t debounce_ticks = 0;
+#
+#         const bool no_change = compare_keys(keys_buffer, keys_snapshot, ROWS);
+#         if (no_change) {
+#             debounce_ticks++;
+#             if (debounce_ticks == DEBOUNCE) {
+#                 nrf_gzll_add_packet_to_tx_fifo(PIPE_NUMBER, keys_snapshot, ROWS);
+#                 debounce_ticks = 0;
+#             }
+#         } else { ... }
+#     }
+#
+# `handle_send` is called from the 1 kHz tick, and `no_change` is true when the
+# matrix reads exactly what it read last time - which includes "still nothing
+# down". So the reference puts an all-released packet on the air every 5 ms for as
+# long as the half is awake, and stops only when the half powers itself down
+# (INACTIVITY_THRESHOLD = 500 ticks, i.e. 500 ms after the last key). Its stream
+# never stops while a session is going.
+#
+# Why that matters here: the library drops a device out of sync after
+# sync_lifetime_timeslots of silence - 30 x 900 us = 27 ms, see [gazell] - and a
+# device that is out of sync has to SEARCH for the host before its next packet can
+# land. That search is the 15-timeslot dwell in `when_out_of_sync` times three
+# channels, and by the arithmetic in the [gazell] max_tx_attempts note it can run
+# to tens of milliseconds. So a burst that starts more than ~0.5 s after the last
+# one begins with that search, and the first character of it pays for it. The
+# reference never pays it inside a session.
+#
+# keepalive_ms is that stream, at a slower rate: while idle and otherwise silent, a
+# packet carrying the current (all-released) state goes out every keepalive_ms.
+#
+#   15  = half of the 27 ms the library tolerates, i.e. two chances per window.
+#   0   = off; the behaviour before this change (nothing at all while idle).
+#
+# The packet carries no information: the counters it repeats are unchanged, so the
+# receiver's differencing produces no event from it (see OFF_ENCODER in board.rs).
+# It exists only to keep the link in sync.
+#
+# What it costs: a radio transmission every 15 ms forever, which no longer lets the
+# radio's clock stop between keys. This is the deliberate trade - idle current for
+# the first key of a burst - and the one number here that a few days of standby
+# will show. It also presupposes radio_off_when_idle = false: with the radio
+# switched off while idle there is nothing to keep in sync, and the first press
+# switches it back on anyway, so the keepalive is skipped in that configuration.
+#
+# 2026-09-28: set to 0 on Lemon's instruction, to be tested for its effect on
+# typing. Measured standby was ~3.4 mA average over 14 h on a 250 mAh cell
+# (100% -> 81%), and this stream is the largest single known load on the half:
+# one radio transmission every 15 ms, which also keeps the 32 MHz crystal
+# starting up all night. With the stream gone the radio's clock finally stops
+# between keys and Gazell falls out of sync 27 ms after the last packet - so the
+# first key of a burst after a pause MAY pay a search, which is exactly what this
+# value buys and what is being tested. Revert to 15 if that search is felt.
+keepalive_ms = 0
+
+# -----------------------------------------------------------------------------
+# Regulator mode, as on the receiver: "keep" = do not touch the register.
+# -----------------------------------------------------------------------------
+[power]
+reg1 = "keep"
+
+# -----------------------------------------------------------------------------
+# Getting into a half's bootloader without reaching for the reset button.
+# -----------------------------------------------------------------------------
+#
+# The four cells `dfu_combo` names in each half's section above, all down at once,
+# after which the half finishes what it was doing, says "nothing is down" one last
+# time, and resets with the bootloader magic set. src/dfu.rs holds the order and
+# the reasoning; this table is only the dials.
+#
+#   enabled         false = no combo at all. The emergency stop for a half whose
+#                   combo fires when it should not - and the only one there is,
+#                   since a keyboard that keeps resetting itself cannot be
+#                   reached by the usual route either.
+#   require_usb     true  = the gesture is ignored while no cable is plugged in
+#                   (POWER->USBREGSTATUS.VBUSDETECT, read at the moment the
+#                   gesture lands). A half that resets with a cable attached comes
+#                   back as a UF2 drive; a half that resets with no cable comes
+#                   back as nothing at all, and is recovered only by the
+#                   bootloader's own 3 s timeout. false = always fire. Worth
+#                   knowing: this gate is the one part of the path that has never
+#                   been observed on this hardware, so if the combo stops working
+#                   with a cable plugged in, this line is the thing to turn off.
+#   window_ms       the four cells must all go down within this many ms of each
+#                   other. Wide enough for two thumbs, narrow enough that typing
+#                   cannot forge it - the layout has no second 2x2 cluster of fast
+#                   keys spread across that distance.
+#   grace_ms        how long the half keeps reporting normally after the gesture
+#                   lands, so the four keycodes reach the host before the half
+#                   disappears. The receiver debounces a change for a few ms of
+#                   its own and the host's report follows; this covers both. It is
+#                   also what keeps the combo from leaving a held modifier behind
+#                   on a layer the user is no longer touching.
+#   release_packets how many "everything released" reports go out before the
+#                   reset, at the ordinary 5 ms repeat cadence (= 25 ms of contact
+#                   for the default 6). The receiver holds a half's keys until its
+#                   500 ms link timeout, so without these the four corner cells
+#                   would stay down for half a second after the half vanished.
+[dfu]
+enabled = true
+require_usb = true
+window_ms = 40
+grace_ms = 40
+release_packets = 6

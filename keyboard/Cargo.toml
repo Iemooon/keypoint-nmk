@@ -1,0 +1,118 @@
+[package]
+name = "keypoint-nmk-keyboard"
+version = "0.1.0"
+edition = "2024"
+description = "KeyPoint 2.4GHz transmitter half: matrix scan -> Nordic Gazell device. No RMK, no BLE, no USB."
+
+# ---------------------------------------------------------------------------
+# Why this crate looks like this
+#
+# Goal: one half of a split keyboard that scans its own matrix and transmits it
+# to a dongle over Nordic Gazell (2.4GHz, strictly one-way), then powers itself
+# down when nobody is typing.
+#
+# It is deliberately NOT built on RMK. The keyboard's brain - keymap, layers,
+# Vial - lives in the RECEIVER (same as the original redox design, and same as
+# RMK's own split topology), so a half only has to sample, transmit and sleep.
+# That keeps this firmware small, keeps the sleep behaviour under this file's
+# control rather than an async runtime's, and means an embassy upgrade is a
+# version bump here and nothing else.
+#
+# Everything board-specific (chip, matrix size, pins, diode direction, radio
+# parameters, timings) comes from board.toml via build.rs - see README.md.
+#
+# The radio is Nordic's closed-source Gazell library, linked by build.rs. Its
+# symbol contract (which callbacks we must provide, which ISRs it defines) is
+# documented in src/gazell.rs, read out with arm-none-eabi-nm rather than
+# assumed.
+# ---------------------------------------------------------------------------
+
+[dependencies]
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt"] }
+# The async I2C trait that embassy-nrf's `Twim` implements. Needed for the
+# TrackPoint, which is the first thing on this half that is not plain GPIO.
+embedded-hal-async = "1"
+# The blocking output-pin trait the panel's chip select needs, and the graphics
+# primitives the status screen is drawn with. Both versions match what the BLE
+# firmware built against, which is also what the local registry cache holds - so
+# this stays an offline build.
+embedded-hal = "1.0.0"
+embedded-graphics = "0.8"
+# One `Signal`, to hand the screen task the state it should paint. The painting
+# must not happen on the typing loop's time - see screen::task - so the two are
+# decoupled, and this is the decoupling.
+embassy-sync = "0.8"
+# TWIM's write buffer has to be `'static` even when it is empty, which it always is
+# here. See `board::empty_tx_buffer`.
+static_cell = "2"
+# `expf` for the TrackPoint's acceleration curve. ZMK calls the C library's; this is
+# the same function in Rust. It is a software float routine rather than a single
+# FPU instruction - a few tens of cycles, against a worst-case 200 Hz packet rate.
+# No USB, no BLE: the only driver actually used is GPIO, and the time driver.
+# `unstable-pac` is required because this firmware reads three registers directly
+# - POWER.DCDCEN (to pick the regulator mode the UF2 bootloader did not leave
+# alone), and CLOCK.LFCLKSTAT / CLOCK.LFCLKSRC (to turn embassy's LFCLK start
+# into a real edge, since the bootloader has already started that clock) - which
+# have no embassy wrapper. Nothing here sleeps the chip: no POWER.SYSTEMOFF.
+embassy-nrf = { version = "0.11", features = [
+    "defmt",
+    "time-driver-rtc1",
+    "gpiote",
+    "unstable-pac",
+    "time",
+] }
+embassy-executor = { version = "0.10", features = [
+    "defmt",
+    "platform-cortex-m",
+    "executor-thread",
+] }
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+
+# ---------------------------------------------------------------------------
+# Chip selection. Exactly one must be enabled; each forwards to embassy-nrf,
+# which brings the matching nrf-pac. board.toml's [chip] name must agree with
+# the feature chosen here, and build.rs fails the build if they do not.
+#
+# There is no USB here, so this is not restricted to the USB-capable parts:
+# anything Gazell has a library for will do (nRF52840 / 52833 / 52832, and
+# nRF51822 with the nRF51 archive). The archive is picked by [gazell] library in
+# board.toml.
+# ---------------------------------------------------------------------------
+[features]
+default = ["nrf52840"]
+nrf52840 = ["embassy-nrf/nrf52840"]
+nrf52833 = ["embassy-nrf/nrf52833"]
+nrf52832 = ["embassy-nrf/nrf52832"]
+
+[build-dependencies]
+# board.toml parsing. 0.8 matches what the local registry cache already holds
+# (rmk-config pulls it), so builds work offline - the same reason the receiver
+# pins this version.
+toml = "0.8"
+
+[[bin]]
+name = "left"
+path = "src/left.rs"
+
+[[bin]]
+name = "right"
+path = "src/right.rs"
+
+[profile.dev]
+codegen-units = 1
+debug = true
+opt-level = 1
+overflow-checks = true
+lto = false
+panic = 'unwind'
+
+[profile.release]
+codegen-units = 1
+debug = true
+opt-level = "z"
+overflow-checks = false
+lto = "fat"

@@ -1,0 +1,166 @@
+# =============================================================================
+#  RMK compile-time behaviour limits.
+#
+#  THIS IS NOT THE BOARD DESCRIPTION - board.toml is, and it stays the single
+#  source of truth for anything about the keyboard itself (matrix, flash/RAM
+#  layout, USB IDs, Vial definition, Gazell parameters).
+#
+#  What this file is: RMK's own build script (rmk-types/build.rs) reads a
+#  keyboard.toml-format file from the path in the KEYBOARD_TOML_PATH environment
+#  variable - set in .cargo/config.toml, exactly as RMK's own examples do - and
+#  turns the numbers below into compile-time constants (COMBO_MAX_NUM,
+#  MORSE_MAX_NUM, ...). They are capacities baked into the firmware, not
+#  settings read at runtime.
+#
+#  Leaving the file out is not an error: RMK then silently falls back to its
+#  defaults, which are 8 combos and 8 morse entries. That fallback is why these
+#  numbers belong here explicitly - "the firmware supports 8 combos" is not
+#  something that should be discoverable only by reading RMK's source.
+#
+#  Cost: these capacities live in the storage area described by board.toml's
+#  [storage]. The 8 layers x 48 keys keymap is ~0.8 KB, 32 combos and 32 morse
+#  entries a few KB more, so even the 8 KB storage of the smallest profile fits;
+#  raise [storage] num_sectors if you raise these much further.
+# =============================================================================
+
+[rmk]
+# The receiver's debounce window, in milliseconds. It reaches the firmware as
+# DEBOUNCE_THRESHOLD, and in this receiver it is NOT a delay on the leading edge:
+# rx/src/gazell.rs builds RMK's FastDebouncer, which commits a change on the first
+# pass that sees it and then holds that key still for this long.
+#
+# Why: the stream is already debounced where it is measured - the transmitter only
+# puts a state on the air once DEBOUNCE_TICKS (5) consecutive 1 ms scans agree, and
+# it re-sends a change every 5 ms after that - so a window on this side cannot
+# filter anything the transmitter did not. It can only delay a change that has
+# already been proven stable, and that delay sat on the critical path of every
+# "stop, then type" first key (5 ms per key, measured from the packet's arrival).
+# This is why the window is 5 rather than RMK's default 20, and why the fast
+# debouncer is used at all.
+#
+# What 5 still does here: a key that changes twice inside the window is held until
+# the window expires, so a burst of contradictory reports cannot become two events.
+# Nothing in this link produces such a burst - Gazell packets are CRC-checked and
+# the half never puts an unstable state on the air - so treat the value as a floor
+# rather than a filter. 0 is legal and makes the lockout a single pass.
+debounce_time = 5
+
+# Combos. Vial reads this number from the firmware, so raising it is what makes
+# more combo slots appear in Vial's Combo tab.
+combo_max_num = 32
+
+# Morse - which is RMK's implementation of the "tap dance" behaviour (the same
+# machinery also does tap-hold and home row mods; see RMK's
+# docs/configuration/behavior.md). One entry per key that carries a pattern.
+morse_max_num = 32
+
+# Auto mouse layer entries. Two: one per pointing device, because the pad and the
+# nub need different idle timeouts.
+#
+# This MUST be set. RMK derives the number from `[[behavior.auto_mouse_layer]]`
+# when a keyboard.toml is present, and that section does not apply here - the
+# config is built in Rust. The derived value is therefore 0, the two entries are
+# dropped by `.push(..).ok()` without a word, and the runner then sees no entries
+# at all and idles forever: the mouse layer never activates.
+auto_mouse_layer_max_num = 2
+
+# -----------------------------------------------------------------------------
+#  Morse / tap-hold timing.
+#
+#  ⚠ NOT READ BY THIS PROJECT. This whole section is documentation. RMK's build
+#  script turns keyboard.toml into compile-time CAPACITIES only (COMBO_MAX_NUM,
+#  MORSE_MAX_NUM, DEBOUNCE_THRESHOLD, AUTO_MOUSE_LAYER_MAX_NUM, event subs); the
+#  morse TIMINGS in it are never parsed into the running config, because this
+#  receiver builds its BehaviorConfig in Rust - see `[behavior.morse]`-equivalent
+#  code in src/main.rs, which is where the real initial values live. The three
+#  settings below are mirrored there; keep the two in step by hand, or delete
+#  this section. It is left in place because it explains the field names, which
+#  took a whole diagnosis to get right.
+#
+#  These mirror the three ZMK settings of the same names/intent:
+#
+#    hold_timeout        - ZMK's `tapping-term-ms`: how long a tap-hold key must
+#      be held before its hold action is taken. Vial shows this as "Tapping
+#      Term". RMK's default is 250. THIS is the tapping-term field - it was
+#      missing from this file until 2026-09-28, so the build ran on 250.
+#
+#    prior_idle_time     - the flow-tap window, ZMK's `flow-tap-term-ms`: if a
+#      tap-hold key is pressed this soon after the previous key press, it is
+#      forced to its tap action. Vial shows this as "Flow Tap". Its own source
+#      comment states it plainly: "used only when flow tap is enabled"
+#      (rmk/src/config/behavior.rs:128).
+#
+#    enable_flow_tap     - the global switch for the above. Off by default.
+#
+#    hold_on_other_press - ZMK's "hold on other key press" flavour: pressing any
+#      other key while the tap-hold key is down resolves it as a hold, without
+#      waiting out the tapping term. Set as the default profile here, so every
+#      `mt!()` picks it up unless its own profile says otherwise. Note that
+#      only one of permissive_hold / hold_on_other_press / normal_mode may be
+#      true. This is the setting that satisfied the requirement on 2026-09-28.
+#
+#  CORRECTION, kept because it cost a whole diagnosis: an earlier version of this
+#  comment called `prior_idle_time` the tapping term and claimed it was "BOTH the
+#  tapping term and the flow-tap window, so the two could not be set apart", then
+#  advised leaving it alone so flow tap would keep working. Both claims were
+#  wrong - they are separate fields, `hold_timeout` and `prior_idle_time` - and
+#  the advice actively blocked the correct fix.
+#
+#  MORE IMPORTANT: every value in this section is an INITIAL value, not an
+#  effective one. RMK persists a `BehaviorConfig` in flash and restores it over
+#  this at boot (rmk/src/host/storage.rs:110-115 restores `prior_idle_time` and
+#  the whole `default_profile`, which carries `hold_timeout`). Vial writes that
+#  record the instant any of these fields is edited in its UI - including the
+#  checkbox. Measured on this keyboard: this file said 100 ms and
+#  hold_on_other_press=true; Vial reported 10 ms and unchecked. So on a keyboard
+#  that has ever been touched in Vial, editing here and reflashing changes
+#  nothing you can feel - change it in Vial. The only switch that clears the
+#  stored record is `[storage] clear_layout`, and it wipes the VIAL LAYOUT too,
+#  so never reach for it to retune two timings. Same class of trap as the encoder
+#  map and the keymap: flash wins over compile time.
+# -----------------------------------------------------------------------------
+
+# There is deliberately NO `[behavior.morse]` section here.
+#
+# Two reasons, both learned the hard way on 2026-09-28:
+#   1. It would do nothing. This project does not read morse timings from
+#      keyboard.toml - see the header of the block above. rmk-types/build.rs only
+#      lifts the CAPACITY numbers in `[rmk]` and the `[event.*]` subs out of this
+#      file.
+#   2. The firmware sets no timings at all, by decision: Vial is the single source
+#      of truth for tapping term, flow tap and the hold flavour. A board runs on
+#      RMK's stock defaults (tapping term 250 ms, flow tap OFF, prior_idle_time
+#      120 ms, mode Normal) until the first Vial edit, and from then on the value
+#      in flash is the value in effect - it is restored over the compiled config
+#      at every boot (rmk/src/host/storage.rs:110-115).
+#
+# So to change how tap-hold feels, change it in Vial's Config page. Do not add a
+# section here; it would read as configuration, behave as nothing, and the next
+# person would chase it the way the last one did.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+#  Event subscriber slots.
+#
+#  Capacities, not settings: a subscriber takes its slot when the task starts, and
+#  one that arrives after the slots are gone simply never receives an event. The
+#  failure is silent, so these have to match the actual consumers.
+# -----------------------------------------------------------------------------
+
+[event.pointing]
+# Four consumers: a PointingProcessor for the pad, one for the nub, the auto mouse
+# layer runner (which also listens for motion), and the speed controller.
+#
+# The speed controller is here so that a Vial edit to a tier cell takes effect
+# without a keypress: RMK has no configuration-changed event, and moving the pointer
+# is the natural thing to do right after changing a pointer speed. Default is 2.
+#
+# channel_size stays at its default of 8. It only needs raising if events are
+# actually dropped under fast input, which would show up as a cursor that lags.
+subs = 4
+
+[event.layer_change]
+# Two consumers: the keyboard and the auto mouse layer runner, which activates and
+# releases layer 4. Default is 1 - and with only one slot, the runner is the
+# consumer that misses out, so the layer would never change either way.
+subs = 2

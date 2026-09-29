@@ -1,0 +1,55 @@
+# =============================================================================
+#  Board variant: nice!nano (nRF52840, Adafruit UF2 bootloader)
+#
+#  An OVERRIDE file, not a second copy of board.toml: build.rs starts from
+#  board.toml (the single source of truth for the keyboard and the link) and
+#  merges the values below on top. Only what depends on the bootloader and the
+#  chip belongs here.
+#
+#  Build it with:
+#      set BOARD_OVERRIDE=boards\nrf52840-nicenano.toml
+#      cargo build --release --no-default-features --features nrf52840
+#  or just run tools\build-variants.cmd, which does all three.
+# =============================================================================
+
+[chip]
+name = "nrf52840"
+
+[memory]
+# 0x1000, NOT 0x26000 - measured on THIS board, not assumed.
+#
+# Two Adafruit bootloader builds exist and they put the application in different
+# places: the SoftDevice variant reserves 0x1000..0x26000 for the SoftDevice and
+# starts the application at 0x26000, while the "nosd" variant starts it at
+# 0x1000. This board's own INFO_UF2.TXT says "SoftDevice: not found" / "UF2
+# Bootloader 0.6.0", so it is the nosd one - and an image linked at 0x1000 has
+# been flashed to it and run.
+#
+# The failure mode for getting this wrong is silent: the image flashes
+# successfully, then never runs, and the board looks dead.
+flash_origin = 0x00001000
+# Ends at 0xA0000. The Adafruit bootloader occupies the top 48K of the 1M flash
+# (0xF4000..0x100000), well clear of both the application and the storage below.
+flash_length = "636K"
+# Same 8-byte offset and size as the dongle: RMK's own nRF52840 + Adafruit
+# bootloader memory.x uses exactly these numbers.
+ram_origin = 0x20000008
+ram_length = "255K"
+
+[flash]
+# Top 48K belongs to the Adafruit UF2 bootloader. Same number as the verified
+# nice!nano profile in planckduos-nmk.
+reserved_top = 0xF4000
+
+[storage]
+# DELIBERATELY identical to the dongle's: same start AND same 6 sectors, so one
+# Vial layout (.vil) works on either nRF52840 board without re-loading anything.
+# 24K when 336K is free here; capacity is not the constraint, interchangeability
+# is. (6 sectors is RMK's own floor - sequential-storage's GC needs a spare page.
+# Never go below it.)
+start_addr = 0xA0000
+num_sectors = 6
+
+# [power] is deliberately NOT restated here: board.toml's reg1 = "keep" is the
+# right value for all three boards (do not touch what the bootloader left - the
+# DC/DC mode needs an inductor that not every board revision populates).

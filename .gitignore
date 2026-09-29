@@ -1,0 +1,45 @@
+# Build output. `cargo build` regenerates all of it; two of these dirs have
+# reached 3 GB on the development machine, so they must never be committed.
+target/
+**/target/
+
+# Flash images produced by tools/build*.cmd (objcopy + hex-to-uf2).
+# Regenerable, and GitHub caps files at 100 MB / repos at ~1 GB - firmware belongs
+# in Releases, not in history. Pin them per tag instead of re-committing.
+*.uf2
+*.hex
+*.elf
+*.bin
+
+# The Gazell archive is INTENTIONALLY committed under vendor/gzll/ - the build
+# needs that one file and nothing else from the nRF5 SDK, and Nordic's licence
+# permits redistributing the binary when license.txt travels with it. So there is
+# no ignore rule here: excluding it would make a fresh clone unbuildable, and
+# re-including it through `/vendor/*` is impossible anyway (git cannot re-include
+# a file whose parent directory is excluded).
+
+# Python scratch caches from tools/.
+__pycache__/
+*.pyc
+
+# Temporary files left by the sweep/compare scripts, and build logs.
+*.orig-bak
+_ab_compare/
+build-*.log
+last-build.log
+*.log
+
+# Editor / OS noise.
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local archives that are NOT part of the project: superseded firmware,
+# quarantined experiments, forensic dumps.
+/_archive-*/
+/_quarantine-*/
+
+# The owner's tuning spreadsheet. It is a working document, not project
+# documentation - the values themselves live in the source and in README.md.
+/指针参数表.xlsx

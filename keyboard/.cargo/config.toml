@@ -1,0 +1,11 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# No probe-rs on this machine: both halves are flashed by dragging a UF2 onto
+# the Adafruit bootloader's BOOT drive (or by holding the reset button twice),
+# and `cargo-hex-to-uf2` produces that file from the .hex.
+linker = "flip-link"
+
+[build]
+target = "thumbv7em-none-eabihf"     # Cortex-M4F
+
+[env]
+DEFMT_LOG = "info"

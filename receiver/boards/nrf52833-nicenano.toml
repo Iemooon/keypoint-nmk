@@ -1,0 +1,51 @@
+# =============================================================================
+#  Board variant: nRF52833 nice!nano - the board the owner calls "blue macro"
+#  (Adafruit UF2 bootloader, SoftDevice layout)
+#
+#  An OVERRIDE file, not a second copy of board.toml: build.rs starts from
+#  board.toml (the single source of truth for the keyboard and the link) and
+#  merges the values below on top.
+#
+#  Build it with:
+#      set BOARD_OVERRIDE=boards\nrf52833-nicenano.toml
+#      cargo build --release --no-default-features --features nrf52833
+#  or just run tools\build-variants.cmd, which does all three.
+#
+#  Layout copied from the verified planckduos-nmk profile of the same name
+#  (boards/nice-nano-52833.toml there). That one is hardware-confirmed to boot
+#  and enumerate over USB on this exact board.
+# =============================================================================
+
+[chip]
+name = "nrf52833"
+
+[memory]
+# 0x27000, NOT 0x1000. Unlike the nRF52840 nice!nano, this board's bootloader
+# reserves the region below 0x27000 (measured on this board: it was flashed with
+# a 0x27000 image and came up as a USB device), and NOT 0x26000 either - that is
+# the ZMK number for the SoftDevice variant, and it is not interchangeable.
+flash_origin = 0x00027000
+# 260K, ending at 0x68000 where storage starts.
+flash_length = "260K"
+ram_origin = 0x20000000
+ram_length = "128K"
+
+[flash]
+# The top 48K of the 512K flash, by analogy with the nRF52840 nice!nano
+# (0xF4000 of 1M). NOT measured on this board - if the bootloader turns out to
+# be larger than 48K, the storage below would write into it.
+#
+# Verify with:  nrfutil device fw-info --serial-number <sn>
+# (prints imageLocation.address and the bootloader's own size).
+reserved_top = 0x74000
+
+[storage]
+# 12 sectors x 4K = 48K filling 0x68000..0x74000 exactly. NOT the 2 sectors this
+# layout once carried: sequential-storage's GC needs a spare page and every RMK
+# example uses at least 6, or the write path can wedge (it looked like "Vial
+# import hangs").
+start_addr = 0x68000
+num_sectors = 12
+
+# [power] is deliberately NOT restated here: board.toml's reg1 = "keep" is the
+# right value for all three boards.
