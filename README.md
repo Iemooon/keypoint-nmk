@@ -1,5 +1,7 @@
 # keypoint-nmk — a 2.4GHz-only firmware pair for the KeyPoint keyboard
 
+[![build](https://github.com/Iemooon/keypoint-nmk/actions/workflows/build.yml/badge.svg)](https://github.com/Iemooon/keypoint-nmk/actions/workflows/build.yml)
+
 Two firmwares that together replace the keyboard's BLE link with a Nordic Gazell
 (2.4GHz) link. No radio mode switch, no BLE, no USB on the halves: **2.4GHz only**.
 
@@ -72,6 +74,35 @@ cargo hex-to-uf2 --input-path keypoint-nmk-left.hex --output-path keypoint-nmk-l
 
 `.github/workflows/build.yml` runs exactly these steps on every push and publishes
 the images as build artifacts.
+
+## Reproducibility — what CI does and does not prove
+
+CI builds the same source, with the same pinned compiler, from the same vendored
+Gazell archive. It does **not** reproduce the developer's image byte for byte, and
+no amount of pinning will: `rustc` embeds absolute paths of dependency sources into
+panic and assertion-location strings, so the same code compiled on two hosts differs
+wherever those strings sit.
+
+Measured on the receiver image (both sides rustc 1.98.0, commit `88d9e12ae`, same rmk
+checkout `f12257e`):
+
+```
+developer machine : C:\Users\lemon\.cargo\registry\src\...   (assert paths)
+GitHub runner     : /home/runner/.cargo/registry/src/...     (51 hits)
+result            : 162,796 B vs 162,692 B - same flash span, 104 B shorter
+```
+
+So the workflow asserts what is actually invariant and skips what is not:
+`tools/verify_variant.py` checks each image's start address, chip family byte and
+flash span against the board it claims to be, and that two boards sharing a layout
+produce the *same* bytes — which is the property that matters when one image is
+meant to flash two different 52840 boards. Hash equality against a laptop is not a
+meaningful gate, and pretending otherwise would produce a red check that means
+nothing.
+
+If bit-reproducible images are ever wanted, the lever is `-C remap-path-prefix` over
+the cargo home and workspace, applied identically on every machine that builds
+releases - not a CI-only flag, or CI and local builds would then differ by design.
 
 ## Flashing
 
