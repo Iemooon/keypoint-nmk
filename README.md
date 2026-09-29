@@ -196,6 +196,28 @@ and removes a whole class of idle wake-ups.
 keyboard by that ID plus the matrix shape and layout, so **saved layouts keep
 working** — and the logical matrix is the same 12x8 the BLE dongle reports.
 
+### Layers
+
+The receiver reports **10 layers**. That number is not a setting: rmk answers Vial's
+`DynamicKeymapGetLayerCount` with the length of the keymap array in
+`receiver/src/keymap.rs`, so the array literal is the only place it is ever written and
+a disagreement there is a compile error, not a surprise. Ten is also the ceiling the
+protocol can name — the layer number inside a Vial keycode is four bits wide.
+
+Layers 5..9 are blank (`No`), deliberately not transparent. `No` is what Vial paints as
+an empty layer, and should one ever be activated it does nothing; `Transparent` would
+fall through to layer 0 and quietly turn an unconfigured layer into a second base layer.
+
+Blank layers are not free. Measured with `cargo size`: **+3504 B of `.bss`, +896 B of
+`.text`**, nothing else moved — rmk's docs are right that reserved layers cost flash and
+RAM whether they are used or not.
+
+The BLE dongle firmware still reports 5, because the two share a keyboard ID on purpose.
+That costs nothing here: storage keys every cell by `(layer, row, col)`, so layers 0..4
+read back exactly as before and layers 5..9 simply have nothing stored. The one
+asymmetry worth knowing is that a layout edited up to layer 9 and then loaded onto the
+5-layer dongle has its writes above layer 4 refused by rmk's bounds check.
+
 The halves are joined along **rows**: left = rows 0..5, right = rows 6..11. (A
 flat 4x12 keyboard such as `nmk` joins along columns instead; mixing the two up
 does not fail to compile, it silently reassigns which physical key each keymap

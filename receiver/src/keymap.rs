@@ -39,9 +39,20 @@ pub(crate) const COL: usize = crate::board::COL;
 pub(crate) const ROW: usize = crate::board::ROW;
 /// The layer count is a compile-time property of the keymap array below - it is
 /// also the number RMK reports to Vial, which is what decides how many layers
-/// the editor offers. 5 is what the BLE dongle firmware reports, so the saved
-/// .vil keeps working.
-pub(crate) const NUM_LAYER: usize = 5;
+/// the editor offers (`DynamicKeymapGetLayerCount` answers with the keymap's own
+/// `NUM_LAYER`, rmk `src/host/via/mod.rs:195`).
+///
+/// Ten is the ceiling: the layer number in a Vial keycode is four bits wide
+/// (`keycode_convert.rs:163`), and the Vial app does not offer more than ten
+/// tabs either. So this is not "some layers added", it is "all the layers the
+/// protocol can name".
+///
+/// The BLE dongle firmware still reports 5. That is harmless and deliberate:
+/// storage is keyed per cell, the .vil's content lives in layers 0..4, and those
+/// carry over unchanged. It does mean that a layout edited here up to layer 9 and
+/// then loaded onto the BLE firmware has its writes above layer 4 refused by
+/// rmk's bounds check - the first five layers still land.
+pub(crate) const NUM_LAYER: usize = 10;
 
 /// Rotary encoders this firmware knows about: one per half, id 0 = left, id 1 =
 /// right, matching the ZMK `sensors = <&left_encoder &right_encoder>` order the
@@ -234,6 +245,33 @@ pub const fn get_default_keymap() -> [[[KeyAction; COL]; ROW]; NUM_LAYER] {
             [a!(No); COL],
             [a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No), a!(No)],
         ],
+        // ==================== Layers 5..9: reserved, blank on purpose ====================
+        //
+        // `No`, not `Transparent`, and the two are not interchangeable here:
+        //   * Vial draws an empty layer, which is what "blank" should look like when
+        //     it is opened; `Transparent` would paint every one of these 96 cells as
+        //     a see-through marker.
+        //   * if such a layer is ever activated, `No` means the keys do nothing,
+        //     while `Transparent` would fall through to layer 0 and type letters -
+        //     a layer nobody configured would quietly become a second base layer.
+        //
+        // Blank layers are not free. rmk's own docs say so ("Empty layers still
+        // consume flash and RAM"), and the numbers are recorded below rather than
+        // estimated, because the cost is the argument against ever doing this again
+        // without needing it.
+        //
+        // What is NOT disturbed, both verified in rmk's source rather than assumed:
+        //   * the layout already saved in flash - storage keys each cell by
+        //     `(layer, row, col)`, so layers 0..4 read back exactly as before and
+        //     layers 5..9 simply have nothing stored;
+        //   * the eight tier cells - `speed_control::refresh_cells` reads them with
+        //     `action_at_pos(0, ..)`, layer 0 only, so blanks above cannot change
+        //     pointer speeds or scroll rates.
+        [ [a!(No); COL]; ROW ],
+        [ [a!(No); COL]; ROW ],
+        [ [a!(No); COL]; ROW ],
+        [ [a!(No); COL]; ROW ],
+        [ [a!(No); COL]; ROW ],
     ]
 }
 
@@ -373,5 +411,19 @@ pub const fn get_default_encoder_map() -> [[EncoderAction; NUM_ENCODER]; NUM_LAY
             encoder!(a!(No), a!(No)),
             encoder!(a!(No), a!(No)),
         ],
+        // Layers 5..9: unbound, matching the blank keymap layers above.
+        //
+        // This table is looked up by the ACTIVE layer and does not fall through
+        // (see the note at the top of this function), so a knob that is meant to
+        // keep working while one of these layers is up must be bound here too -
+        // blank here means the knob does nothing on that layer, not that it keeps
+        // doing whatever layer 0 says. Vial can write these pairs later; the
+        // encoder count this firmware reports (`NUM_ENCODER`) is unchanged, so the
+        // two slots Vial shows for each of the ten layers are the same two knobs.
+        [encoder!(a!(No), a!(No)); NUM_ENCODER],
+        [encoder!(a!(No), a!(No)); NUM_ENCODER],
+        [encoder!(a!(No), a!(No)); NUM_ENCODER],
+        [encoder!(a!(No), a!(No)); NUM_ENCODER],
+        [encoder!(a!(No), a!(No)); NUM_ENCODER],
     ]
 }
