@@ -8,3 +8,15 @@
 # firmware".
 [toolchain]
 channel = "1.98.0"
+# rustup installs these automatically when cargo is run in this directory, which
+# is what keeps a fresh clone working. Do not rely on a previously installed
+# `stable`: the pinned channel is a SEPARATE toolchain, and without this line a
+# first build there fails with E0463 "can't find crate for `core`" - the target's
+# core/alloc are simply not present. Verified the hard way on the development
+# machine on 2026-09-29, where pinning the channel silently broke local builds.
+targets = ["thumbv7em-none-eabihf"]
+# Same per-toolchain rule: `cargo objcopy` / `cargo size` come from llvm-tools,
+# and the build scripts (and tools/voltage-sweep.py) call them. Without this the
+# compile succeeds and only the image conversion fails - "Could not find tool:
+# objcopy" - which is easy to misread as a broken build script.
+components = ["llvm-tools"]

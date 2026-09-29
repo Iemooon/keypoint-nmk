@@ -3,3 +3,14 @@
 # always built by the codegen they were tested with.
 [toolchain]
 channel = "1.98.0"
+# See keyboard/rust-toolchain.toml for why these lines have to be here at all:
+# a pinned channel is a separate rustup install and inherits nothing from an
+# installed `stable`.
+#
+# One target covers all four board profiles, including both 52833 ones - every
+# chip here is a Cortex-M4F, and receiver/.cargo/config.toml pins exactly this
+# target under [build].
+targets = ["thumbv7em-none-eabihf"]
+# `cargo objcopy` (used by tools/build.cmd and tools/build-variants.cmd) lives in
+# llvm-tools. Without it the compile succeeds and only the image conversion fails.
+components = ["llvm-tools"]

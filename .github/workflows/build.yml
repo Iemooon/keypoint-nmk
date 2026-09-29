@@ -69,6 +69,36 @@ jobs:
             keyboard/keypoint-nmk-left.hex
             keyboard/keypoint-nmk-right.hex
 
+      # Four "cell full" anchor voltages per half (4.15 / 4.16 / 4.17 / 4.18 V), so
+      # the sweep that picks the reading showing 100 % when the charge light goes
+      # out can be done from CI images instead of being compiled by hand first.
+      #
+      # Deliberately the same tools/voltage-sweep.py the developer uses - one
+      # source of truth, not a second implementation that can drift from the first.
+      #
+      # ORDER MATTERS: the sweep leaves keypoint-nmk-<half>.uf2 holding whichever
+      # voltage ran last, so the default images above have to be uploaded first.
+      # That is also why this step sits after the upload rather than before it.
+      - name: Build the four battery-anchor variants per half
+        run: python3 tools/voltage-sweep.py --half both
+
+      - name: Upload voltage variants
+        uses: actions/upload-artifact@v4
+        with:
+          name: keypoint-nmk-halves-voltage-sweep
+          path: |
+            keyboard/keypoint-nmk-left-4.*V.uf2
+            keyboard/keypoint-nmk-right-4.*V.uf2
+
+      # After the sweep the working tree must look untouched - the tool restores
+      # board.rs in a finally block, and this asserts that it really did, so an
+      # interrupted or buggy pass cannot leave a firmware that silently carries
+      # some other anchor voltage.
+      - name: Confirm board.rs was restored
+        run: |
+          git diff --exit-code -- src/board.rs
+          test ! -e src/board.rs.voltagesweep.bak
+
   # -------------------------------------------------------------- receiver ------
   # Three boards, and the only job that needs a C toolchain: rmk's crypto path
   # (p256-cortex-m4-sys, reached through the adafruit_bl feature) shells out to

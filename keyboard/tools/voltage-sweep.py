@@ -9,9 +9,14 @@ left.rs never constructs `Role::Right`, right.rs never constructs `Role::Left` -
 so the left and right sweeps are independent even though each pass writes the
 same number into both arms.
 
-    python tools\\voltage-sweep.py                  # 4.15 / 4.16 / 4.17 / 4.18 V
-    python tools\\voltage-sweep.py 4.14 4.15        # any list, in volts
-    python tools\\voltage-sweep.py --half right     # one half only: left|right|both
+    python tools/voltage-sweep.py                  # 4.15 / 4.16 / 4.17 / 4.18 V
+    python tools/voltage-sweep.py 4.14 4.15        # any list, in volts
+    python tools/voltage-sweep.py --half right     # one half only: left|right|both
+
+Run from the `keyboard/` directory. The same invocation is what CI uses
+(.github/workflows/build.yml), so the online build and a local sweep produce the
+identical set of images from identical code - there is no second implementation to
+drift.
 
 Note that each pass leaves `keypoint-nmk-<half>.uf2` holding that voltage's
 build, so after a run the plain files hold the last voltage in the list.

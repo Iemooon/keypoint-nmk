@@ -75,6 +75,24 @@ cargo hex-to-uf2 --input-path keypoint-nmk-left.hex --output-path keypoint-nmk-l
 `.github/workflows/build.yml` runs exactly these steps on every push and publishes
 the images as build artifacts.
 
+### Battery-anchor variants
+
+The two halves each show a battery percentage derived from a "cell is full" anchor
+voltage, and the right number is a property of a particular battery and charger, not
+of the code — it is picked by flashing an image, charging until the charger's light
+goes out, and reading what the panel says. `keyboard/tools/voltage-sweep.py` builds
+both halves for each candidate anchor (4.15 / 4.16 / 4.17 / 4.18 V by default, any
+list may be passed) and restores `src/board.rs` afterwards, so the sweep never leaves
+the tree modified.
+
+CI runs the same script for the same reason it runs the same `build.cmd` steps: one
+implementation. Every push therefore publishes, besides the default images, an
+`keypoint-nmk-halves-voltage-sweep` artifact with eight images —
+`keypoint-nmk-{left,right}-4.1XV.uf2` — and a following step asserts that `board.rs`
+came back byte-for-byte unchanged and that the sweep's backup file is gone. A variant
+that silently kept some other anchor would be the failure worth catching, so it is
+checked rather than trusted.
+
 ## Reproducibility — what CI does and does not prove
 
 CI builds the same source, with the same pinned compiler, from the same vendored

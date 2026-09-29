@@ -23,7 +23,11 @@ __pycache__/
 *.pyc
 
 # Temporary files left by the sweep/compare scripts, and build logs.
+# *.bak is the backup tools/voltage-sweep.py keeps while it edits board.rs; the
+# tool deletes it on the way out, and the CI workflow asserts it is gone - this
+# line is the seatbelt for an interrupted local run.
 *.orig-bak
+*.bak
 _ab_compare/
 build-*.log
 last-build.log
