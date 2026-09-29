@@ -1,9 +1,10 @@
 name: build
 
 # What this proves: that a clone of this repository, on a machine that has never
-# seen the developer's SDK checkout or QMK_MSYS install, produces the same two
+# seen the developer's nRF5 SDK checkout or QMK_MSYS install, produces the same
 # firmwares. Everything it needs comes from the repo (including vendor/gzll) plus
-# public packages.
+# public packages, and the compiler version is pinned by rust-toolchain.toml rather
+# than drifting with whatever `stable` the runner ships.
 on:
   push:
     branches: ["**"]
@@ -24,23 +25,32 @@ jobs:
   # needs no C compiler at all. If this job fails, the breakage is in the halves.
   keyboard:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keyboard
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabihf
+      # Reads keyboard/rust-toolchain.toml and installs that compiler plus the
+      # Cortex-M4F target. Deliberately not a "install stable" action: a moving
+      # stable changes codegen and therefore changes the artifacts.
+      - name: Activate the pinned toolchain
+        run: rustup show
+
+      - name: Install the ARM target
+        run: rustup target add thumbv7em-none-eabihf
 
       # cargo objcopy / hex-to-uf2 / flip-link, at the versions the project is
       # developed against. .cargo/config.toml names flip-link as the linker for
       # the arm-none targets, so it is not optional.
       - name: Install cargo tools
         run: |
-          cargo install --locked cargo-binutils@0.4.0 cargo-hex-to-uf2@0.1.2 flip-link@0.1.12
+          cargo install --locked cargo-binutils@0.4.0
+          cargo install --locked cargo-hex-to-uf2@0.1.2
+          cargo install --locked flip-link@0.1.12
           rustup component add llvm-tools
 
       - name: Build both halves
-        working-directory: keyboard
         run: |
           cargo build --release
           for side in left right; do
@@ -60,33 +70,39 @@ jobs:
             keyboard/keypoint-nmk-right.hex
 
   # -------------------------------------------------------------- receiver ------
-  # A different set of boards, and the only job that needs a C toolchain:
-  # rmk's crypto path (p256-cortex-m4-sys, reached through the adafruit_bl feature)
-  # shells out to arm-none-eabi-gcc while it builds.
+  # Three boards, and the only job that needs a C toolchain: rmk's crypto path
+  # (p256-cortex-m4-sys, reached through the adafruit_bl feature) shells out to
+  # arm-none-eabi-gcc while it builds.
   receiver:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: receiver
     steps:
       - uses: actions/checkout@v4
 
       - name: Install arm-none-eabi-gcc
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabihf
+      - name: Activate the pinned toolchain
+        run: rustup show
+
+      - name: Install the ARM target
+        run: rustup target add thumbv7em-none-eabihf
 
       - name: Install cargo tools
         run: |
-          cargo install --locked cargo-binutils@0.4.0 cargo-hex-to-uf2@0.1.2 flip-link@0.1.12
+          cargo install --locked cargo-binutils@0.4.0
+          cargo install --locked cargo-hex-to-uf2@0.1.2
+          cargo install --locked flip-link@0.1.12
           rustup component add llvm-tools
 
       # The three boards differ ONLY in bootloader/flash layout, which is a
       # receiver/boards/*.toml override merged onto board.toml by build.rs. The
       # keyboard geometry, the radio parameters and the USB identity are not
-      # duplicated per board, so they cannot drift - the same rule the local
-      # tools/build-variants.cmd follows, reproduced here rather than re-invented.
+      # duplicated per board, so they cannot drift - this mirrors
+      # tools/build-variants.cmd rather than inventing a second scheme.
       - name: Build PCA10059 (nRF52840 dongle, no override)
-        working-directory: receiver
         run: |
           cargo build --release --no-default-features --features nrf52840
           cargo objcopy --release --no-default-features --features nrf52840 \
@@ -95,7 +111,6 @@ jobs:
                            --output-path keypoint-nmk-receiver-PCA10059.uf2 --family nrf52840
 
       - name: Build 52840-nicenano
-        working-directory: receiver
         env:
           BOARD_OVERRIDE: boards/nrf52840-nicenano.toml
         run: |
@@ -106,7 +121,6 @@ jobs:
                            --output-path keypoint-nmk-receiver-52840-nicenano.uf2 --family nrf52840
 
       - name: Build 52833-nicenano
-        working-directory: receiver
         env:
           BOARD_OVERRIDE: boards/nrf52833-nicenano.toml
         run: |
@@ -117,10 +131,10 @@ jobs:
                            --output-path keypoint-nmk-receiver-52833-nicenano.uf2 --family nrf52833
 
       # Checks the products against the layouts they claim: start address, chip
-      # family byte, flash span, and that boards that share a layout really do
-      # share a byte-for-byte image.
+      # family byte, flash span, and that boards sharing a layout really do share a
+      # byte-for-byte image. This is the assertion that the 52840 dongle and the
+      # 52840 nice!nano are one image, enforced in CI.
       - name: Verify the three variants
-        working-directory: receiver
         run: python3 tools/verify_variant.py
 
       - name: Upload receiver images
@@ -135,15 +149,14 @@ jobs:
   # These three scripts re-derive, in Python, things the firmware and the receiver
   # implement separately: the matrix bitmap, the encoder transition table against
   # the rmk this build actually links, and the 15-byte Gazell report layout. They
-  # read sources only - cheap, and they fail where a firmware flash would not.
+  # read sources only - cheap, and they catch drift a flash would not reveal.
   protocol-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabihf
+      - name: Activate the pinned toolchain
+        run: rustup show
 
       - name: Resolve the dependency tree (verify_encoder_decode asks cargo where rmk lives)
         working-directory: receiver

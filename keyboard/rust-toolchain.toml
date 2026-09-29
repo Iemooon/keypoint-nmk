@@ -1,0 +1,10 @@
+# The firmware on the keyboard was built and tested with this exact compiler.
+#
+# CI has to agree byte for byte, or a green check says nothing about the image you
+# can actually flash: the first workflow run used the runner's fresh `stable`
+# (1.98.1) against a development machine on 1.98.0 and every image came out
+# different - same flash spans, same behaviour, different bytes, because a patch
+# release changes codegen. Pinning the channel makes "built by CI" mean "the same
+# firmware".
+[toolchain]
+channel = "1.98.0"

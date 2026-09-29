@@ -35,12 +35,17 @@ separately. They share nothing at compile time — only the numbers in their
 
 Prerequisites, all of them public:
 
-* Rust stable (developed on 1.98.0) with the `thumbv7em-none-eabihf` target
-* `cargo install cargo-binutils cargo-hex-to-uf2 flip-link`
+* Rust **1.98.0**, pinned per crate by `rust-toolchain.toml`. This is not
+  bookkeeping: the first CI run used the runner's `stable` (1.98.1) and every image
+  came out byte-different from the firmware actually flashed on the keyboard — same
+  flash spans, same behaviour, different codegen. Pinning makes a green CI run mean
+  "this is the same firmware".
+* the `thumbv7em-none-eabihf` target (installed automatically by rustup)
+* `cargo install --locked cargo-binutils@0.4.0 cargo-hex-to-uf2@0.1.2 flip-link@0.1.12`
 * `arm-none-eabi-gcc` **only for `receiver`** — RMK's crypto dependency
   (`p256-cortex-m4-sys`) shells out to a C compiler. On Linux:
   `sudo apt install gcc-arm-none-eabi`. On Windows the project was developed with
-  QMK_MSYS's copy; the build scripts add it to `PATH` when present.
+  QMK_MSYS's copy; the build scripts add it to `PATH` when it is present.
 * Nothing to download for the radio stack: Nordic's precompiled Gazell archive is
   vendored under `vendor/gzll/` together with its `license.txt` (see the README
   there for provenance and redistribution terms). `GZLL_DIR`/`GZLL_LIB` override it

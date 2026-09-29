@@ -1,0 +1,5 @@
+# Pinned compiler - see keyboard/rust-toolchain.toml for why this exists.
+# Both crates are pinned to the same version so the two halves of one link are
+# always built by the codegen they were tested with.
+[toolchain]
+channel = "1.98.0"
