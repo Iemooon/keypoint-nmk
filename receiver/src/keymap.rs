@@ -106,19 +106,20 @@ pub const fn get_default_keymap() -> [[[KeyAction; COL]; ROW]; NUM_LAYER] {
             // rather than by position: the eight are listed as a set in
             // `keymap::TIER_CELLS` and nowhere else.
             //
-            // A tier is named by an `F` key whose number is the tier, so `F11` here
-            // means 0.80x, and the cells start on the rungs holding the speeds this
-            // keyboard was already running - `pointer_speed::BOOT_TIERS` lists the
-            // same eight values and is the copy that is consulted on every board.
+            // A tier is named by an `F` key whose number is the tier - `F6` here,
+            // which is 0.55x in the pad's speed ladder - and the cells start on the
+            // rungs holding the speeds this keyboard was already running;
+            // `pointer_speed::BOOT_TIERS` lists the same eight values and is the copy
+            // that is consulted on every board.
             //
-            // The pad's gain starts on `F6` (0.16) against a cap of `F10` (1.9). This
-            // keyboard already scales each
-            // device once - the pad runs at 0.8x of its raw counts and the nub at
-            // 0.39x - so for the same movement the pad reports roughly twice the
-            // counts and a given gain rung bites earlier on it. Both rungs are
-            // starting values taken from that ratio rather than from a measurement;
-            // Vial is where they get settled, and a change lands on the next pointer
-            // event with no keypress.
+            // All four pad cells sit on `F6`: cursor 0.55x, gain 0.20, cap 1.5,
+            // scroll divisor 44. This keyboard already scales each device once - the
+            // pad runs at 0.55x of its raw counts and the nub at 0.29x (its 0.22x
+            // rung times the 1.30 nub factor) - so for the same movement the pad
+            // reports roughly twice the counts and a given gain rung bites earlier on
+            // it. The rungs are starting values taken from that ratio rather than
+            // from a measurement; Vial is where they get settled, and a change lands
+            // on the next pointer event with no keypress.
             //
             // These values are only what a board with empty storage starts on. RMK
             // reads the keymap back from flash, so a keyboard Vial has ever saved
@@ -139,9 +140,9 @@ pub const fn get_default_keymap() -> [[[KeyAction; COL]; ROW]; NUM_LAYER] {
             // Same storage role as the left half's storage row, four cells of its own
             // in the same four roles and the same order: (11,0) is the nub's cursor
             // speed, (11,1) the gain of its acceleration curve, (11,2) that curve's
-            // cap and (11,3) its scroll speed. `F3` is 0.3x in the speed table and
-            // scroll divisor 55 in the nub's own scroll ladder; the curve reads gain
-            // 0.22 (`F11`) against cap 1.40 (`F14`).
+            // cap and (11,3) its scroll speed. `F3` is 0.22x in the speed table and
+            // scroll divisor 180 in the nub's own scroll ladder; the curve reads gain
+            // 0.25 (`F11`) against cap 1.5 (`F6`).
             //
             // The row's history, because the cells have moved twice: (11,1) was the
             // scroll cell, then the curve took that slot when it moved here from the
@@ -152,11 +153,11 @@ pub const fn get_default_keymap() -> [[[KeyAction; COL]; ROW]; NUM_LAYER] {
             // scroll, and reads a curve tier out of both (11,1) and (11,2) - all
             // four are tier cells out of the box, so Vial is where to look.
             //
-            // The gain cell was respaced as well, and that one reads its own rung
-            // number: the fiftieths ladder it now indexes puts 0.22 at `F11` where
-            // the twentieths ladder had `F4`. A keyboard that Vial ever saved still
-            // holds the old `F4`, which now means 0.08 - set the cell again.
-            [k!(F3), k!(F11), k!(F14), k!(F3), a!(No), a!(No), a!(No), a!(No)],
+            // The ladders were respaced under these cells, so a value written before
+            // the respace means something different now - and the cap cell used to
+            // hold `F14`, which names no rung at all and fell back to rung 6. The
+            // cell now says `F6` outright, which is the value it was already running.
+            [k!(F3), k!(F11), k!(F6), k!(F3), a!(No), a!(No), a!(No), a!(No)],
         ],
         // ==================== Layer 1: RAISE ====================
         [
@@ -303,10 +304,12 @@ pub const fn get_default_keymap() -> [[[KeyAction; COL]; ROW]; NUM_LAYER] {
 /// against two different scales to be believed.
 ///
 /// The function keys because a tier is named by one key value, and `F1`..`F12` is a
-/// contiguous run whose numbering is the tier numbering - the key called `F<n>` is
-/// tier `n` - so a tier cell in Vial reads as the number it means. Nothing needs to
-/// see `F13`..`F24` any more: a cell still holding one of those names no tier and
-/// falls back, exactly as a cell holding `Kp1`..`Kp8` from the eight-rung era does.
+/// contiguous run whose numbering is the tier numbering - the key called `F<n>` names
+/// rung `n`, and each ladder's row comments say what that rung is worth (the same
+/// number means different speeds on the pad and the nub - see `pointer_speed`).
+/// Nothing needs to see `F13`..`F24` any more: a cell still holding one of those
+/// names no tier and falls back, exactly as a cell holding `Kp1`..`Kp8` from the
+/// eight-rung era does.
 ///
 /// The keypad row's other virtue is kept by construction: these eight cells have no
 /// switches behind them, so no tier value can ever be typed, wherever it is set.
@@ -336,8 +339,9 @@ pub fn tier_of(action: KeyAction) -> Option<u8> {
 /// These coordinates have no switches behind them, so the matrix can never read
 /// them closed and they can never be typed - which is exactly what makes them
 /// usable as storage. They are set through Vial like any other cell, and the value
-/// to write is an `F` key whose number is the tier: `F6` for the nub's 0.35x,
-/// `F11` for the pad's 0.80x, `F12` for the top of either ladder. See `tier_of`.
+/// to write is an `F` key whose number is the rung: `F3` for the nub's 0.22x cursor,
+/// `F6` for the pad's 0.55x, `F12` for the top of either ladder (0.85x on the pad,
+/// 0.31x on the nub). See `tier_of`.
 ///
 /// On the merged 12x8 matrix the left half is rows 0..5 and the right half rows
 /// 6..11, so `(5,*)` is the left half's spare row and `(11,*)` the right half's.

@@ -12,10 +12,11 @@
 //!
 //! Two tables per axis, not one. A thumb pressing a nub covers far less ground than
 //! a finger on the pad, and having to retune one to match the other was a trap rather
-//! than a design - so the pad and the nub keep a table each even now that the two
-//! tables hold the same rungs. Identical is the current answer and not a requirement:
-//! a tier is named by a key whose number is the tier, and that only means anything
-//! while the same number says the same thing on both halves.
+//! than a design - so the pad and the nub keep a table each, and the same tier number
+//! deliberately means different speeds on the two devices. A cell names a rung by
+//! number; what that rung is worth is read off the table it indexes (the row comment
+//! on each entry), and the numbering is shared so the two halves are configured the
+//! same way.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -24,27 +25,22 @@ use rmk::input_device::pointing::{PointingMode, ScrollConfig, SniperConfig};
 
 use crate::gazell::{TRACKPAD_ID, TRACKPOINT_ID};
 
-/// Trackpad tiers, twenty-four of them: 0.1x through 2.4x, a tenth per rung.
-/// Index is tier minus one, so the tier number IS the tenth - `F8` is 0.8x.
+/// Trackpad tiers, twelve of them: 0.30x through 0.85x, a twentieth per rung.
+/// Index is tier minus one: `F<n>` names rung `n`, and the trailing comment on each
+/// row is what that rung is worth (0.30x at `F1`, 0.85x at `F12`).
 ///
-/// Why twenty-four and not eight: a tier is named by a single key value, and the row
-/// that used to name them had exactly eight (`Kp1`..`Kp8`) - one per tier of an
-/// eight-tier table, with nothing left to grow into. `F1`..`F24` is a contiguous run
-/// of exactly the right length, so the ladder can be as long as the numbering.
-///
-/// Each rung is its tier number divided by ten, which is the whole point of the
-/// change: the cell in Vial reads as the number it means. `F10` is 1.0x - unaltered
-/// counts - the old table's top (2x) is `F20`, and the top of the ladder is `F24` at
-/// 2.4x. The old eight values are not all present: 0.25x, 0.333x and 0.444x were
-/// rungs of a hand-spaced ladder and have no tenth to land on. They are gone rather
-/// than approximated, and the rungs either side of them are a hundredth away from
-/// anything that was tuned by feel.
+/// Why twelve and not eight: a tier is named by a single key value, and the row that
+/// used to name them had exactly eight (`Kp1`..`Kp8`) - one per tier of an eight-tier
+/// table, with nothing left to grow into. `F1`..`F12` is a contiguous run whose
+/// numbering is the rung numbering. (The ladders were briefly twenty-four rungs,
+/// spaced so that the number WAS the value; half of them were steps nobody could
+/// feel, so they were dropped - see `keymap::tier_of` for that argument.)
 ///
 /// Sniper rather than Cursor, and that is not a preference: Cursor takes integer
-/// multipliers only, so 1x is its floor and every tier below 1 would be impossible.
+/// multipliers only, so 1x is its floor and every rung below 1 would be impossible.
 /// Sniper divides, and its accumulator carries the remainder into the next whole
-/// unit, so a slow move does not lose steps to truncation. Every rung is tenths, so
-/// the divisor never exceeds ten and the accumulation stays short.
+/// unit, so a slow move does not lose steps to truncation. The denominators are at
+/// most twenty, so the accumulation stays short.
 pub const PAD_SPEED_TIERS: [(u8, u8); 12] = [
     (3, 10),   // F1  0.3x
     (7, 20),   // F2  0.35x
@@ -61,41 +57,27 @@ pub const PAD_SPEED_TIERS: [(u8, u8); 12] = [
 ];
 
 
-/// TrackPoint tiers: the same twenty-four rungs as the pad's list, but NOT the same
-/// values - this table was halved on request.
+/// TrackPoint tiers: the same twelve rungs as the pad's list, at its own values.
 ///
-/// The history matters, because the numbers here look like a break from the scheme
-/// above. The two ladders once differed by design - a nub under a thumb covers less
-/// ground than a finger on the pad, so its rungs sat below the pad's throughout
-/// (0.1x..0.7x, while the pad ran 0.25x..2.0x). They were then unified so that `F<n>`
-/// would mean one number wherever it was written, and the nub was left with the pad's
-/// ladder: 0.05x through 1.20x. That turned out to be far too fast for the nub in
-/// practice, and this table is the answer - every rung at half the value it holds in
-/// `PAD_SPEED_TIERS`, fortieths instead of twentieths, so the ladder now runs 0.025x
-/// through 0.30x.
+/// The two ladders once differed by design - a nub under a thumb covers less ground
+/// than a finger on the pad, so its rungs sat below the pad's throughout. They were
+/// then unified so that `F<n>` would name one rung wherever it was written, and the
+/// nub was left with the pad's ladder; that turned out to be far too fast for the
+/// nub in practice, and this table is the answer - it runs 0.20x through 0.31x (a
+/// hundredth per step) against the pad's 0.30x..0.85x.
 ///
-/// The consequence to keep in mind: `F<n>` is NO LONGER the same number on both
-/// pointers. `F8` is 0.8x on the pad and 0.125x on the nub, and a tier cell names a
-/// rung rather than a speed, so the same `F8` written in the two halves' cells means
-/// two different speeds. That is the price of keeping one numbering while the values
-/// diverge; if a cell ever has to be read as an absolute number, read this table, not
-/// the pad's.
-///
-/// The halving was a single multiply, so the ladder keeps the pad's shape: pairs of
-/// equal rungs, and the same oddity at the top - `F23` (0.325x) is a shade faster than
-/// `F24` (0.30x). That is inherited from the table this was derived from, not a typo
-/// introduced here, and the pair is left alone because the top of a ladder is a range
-/// someone selects from rather than one anyone is recommended to sit on.
+/// The consequence to keep in mind: the same `F<n>` does NOT mean the same speed on
+/// both pointers. `F8` is 0.65x on the pad and 0.27x on the nub - a tier cell names a
+/// rung, and each ladder decides what that rung is worth; if a cell ever has to be
+/// read as an absolute number, read this table, not the pad's.
 ///
 /// A rung below 1 is a slower pointer and nothing else. `Sniper` divides, and its
 /// accumulator carries the remainder into the next whole unit, so the slowest rung
 /// here does not quantise a slow move away: it delays it, and the steps that arrive
-/// are whole. The fortieths spacing keeps the divisor at forty or under, so the
+/// are whole. The hundredths spacing keeps the divisor at a hundred or under, so the
 /// accumulation stays short.
 ///
-/// What this table does NOT hold is the acceleration cap. There used to be one table
-/// doing both jobs and a rung meant "a speed and a ceiling", which is why the cap's
-/// scale can be told apart from this one by its being ten times larger.
+/// What this table does NOT hold is the acceleration cap - see `pointer_accel`.
 pub const NUB_SPEED_TIERS: [(u8, u8); 12] = [
     (1, 5),    // F1  0.2x
     (21, 100), // F2  0.21x
@@ -115,15 +97,11 @@ pub const NUB_SPEED_TIERS: [(u8, u8); 12] = [
 /// Fallback tiers, used whenever a tier cell does not name a tier - see
 /// `speed_control::SpeedController`, which is what decides when that is.
 ///
-/// These carry the speeds this keyboard was already running when the ladders grew
-/// from eight rungs to twenty-four, so a board whose stored layout still names tiers
-/// the old way (`Kp1`..`Kp8`, which now name nothing at all) keeps its feel instead
-/// of jumping to whichever rung the numbering happens to land on:
-///
-///   pad cursor   `F8`   0.8x          the old tier 5, value unchanged
-///   pad scroll   `F8`   divisor 24    the old tier 5, value unchanged
-///   nub cursor   `F3`   0.3x          the old tier 5, value unchanged
-///   nub scroll   `F3`   divisor 55    the old tier 5, value unchanged
+/// All eight fall back to rung 6 - pad: cursor 0.55x, gain 0.20, cap 1.5, scroll
+/// divisor 44; nub: cursor 0.25x, gain 0.20, cap 1.5, scroll divisor 135 - so a
+/// board whose stored layout still names tiers the old way (`Kp1`..`Kp8`, or
+/// `F13`..`F24`, which now name nothing at all) lands on these rather than on
+/// whichever rung some old number happens to collide with.
 ///
 /// The cursor and scroll fallbacks landing on the same rung per device is neither
 /// coincidence nor copy-paste: each scroll ladder is calibrated so that rung `n`
@@ -149,30 +127,13 @@ pub const NUB_CURSOR0: u8 = 6;
 /// reaches the wheel. So these tables run the opposite way from the speed tables - a
 /// higher tier is a SMALLER number, and a smaller number scrolls faster.
 ///
-/// Both are twenty-four rungs now, like the speed ladders, and each is calibrated
-/// against its own pointer: rung `n` is `round(BASE / n)`, where BASE is the number
-/// that makes the rung the pointer sits on scroll at the speed that pointer moves.
-/// The pad's BASE is 192 and the nub's is 165, which puts the pad's `F8` on divisor
-/// 24 and the nub's `F3` on divisor 55 - the two values these cells have held
-/// through every earlier retune. What that buys is the point of the whole
-/// renumbering: one cell names ONE speed, and a rung means the same thing whether
-/// the speed table reads it or this one does.
-///
-/// A divisor is a whole number and these rungs are not, so the upper rungs crowd
-/// together - the last few are a step apart, some of them equal. That is the
-/// arithmetic showing through rather than a mistake, and it happens where the
-/// pointer is fastest and the eye is least able to tell two rungs apart.
-///
-/// Entry 1 is BASE itself and is the slowest rung by a wide margin - divisor 192 is a
-/// wheel that barely turns. That is what a ladder numbered by value looks like once
-/// its top is a number someone asked for; the useful range for a thumb on the pad
-/// sits nearer divisor 24.
-///
-/// The rungs this replaces were hand-spaced, and both tables showed it: the pad's had
-/// two equal values and the nub's listed a faster rung above a slower one. All of
-/// that is gone with the respacing. The two numbers named above survive exactly, at
-/// the rungs that keep this keyboard's own scroll speed - which is also why the
-/// scroll fallbacks (`F8` and `F3`) sit on the same rungs as the cursor fallbacks.
+/// Both are twelve rungs, like the speed ladders, and each is calibrated against its
+/// own pointer so that rung `n` scrolls at the speed rung `n` moves - which is what
+/// lets one cell name a speed for both the cursor and the wheel. The pad's ladder
+/// runs 64 (slowest) down to 20, a step of 4; the nub's, 210 down to 45, a step of
+/// 15. The calibration is what puts the pad's `F6` on divisor 44 and the nub's `F3`
+/// on divisor 180 - the two values these cells run today, and the same rungs the
+/// cursor fallbacks sit on.
 const PAD_SCROLL_TIERS: [u8; 12] = [
     64,   // F1
     60,   // F2
@@ -204,12 +165,12 @@ const NUB_SCROLL_TIERS: [u8; 12] = [
 ];
 
 
-/// Fallback scroll rungs, matching the cursor rungs above: `F8` on the pad and `F3`
-/// on the nub - the same rung as that pointer's cursor fallback.
+/// Fallback scroll rungs, matching the cursor rungs above: rung 6 on both devices -
+/// the same rung as that pointer's cursor fallback.
 ///
-/// TIER numbers, not divisors. All six fallbacks share one representation because
-/// `SpeedController` treats the six cells alike and only converts to a divisor at
-/// the end. A divisor here would put a value outside 1..24 into a slot that is read
+/// TIER numbers, not divisors. All eight fallbacks share one representation because
+/// `SpeedController` treats the eight cells alike and only converts to a divisor at
+/// the end. A divisor here would put a value outside 1..12 into a slot that is read
 /// as a tier, and `set_scroll_tier` would reject it - the scroll fallback would then
 /// silently never apply, leaving whatever tier was set before.
 ///
@@ -226,12 +187,12 @@ pub const NUB_SCROLL0: u8 = 6;
 /// themselves: these name constants there rather than repeating the numbers, because
 /// a rung that has to be written down twice is a rung that will disagree with itself.
 ///
-/// Both pairs are the ones this keyboard runs - the nub's (0.22 against 1.40) and the
-/// pad's (0.10 against 1.40). See `pointer_accel` for why the gain ladder was respaced
-/// to hold the first of them, and for what the two devices' count scales say about the
-/// second. The pad's curve runs by default now: it shipped switched off for one round
-/// and was turned on on request, which is exactly why these values live here rather
-/// than being copied into a keymap cell.
+/// Both devices fall back to gain 0.20 against cap 1.5 - rung 6 on both ladders. The
+/// nub's gain CELL names `F11` (0.25), which is what the stick actually runs; see
+/// `pointer_accel` for what the two devices' count scales say about the pair. The
+/// pad's curve runs by default now: it shipped switched off for one round and was
+/// turned on on request, which is exactly why these values live here rather than
+/// being copied into a keymap cell.
 pub const PAD_GAIN0: u8 = crate::pointer_accel::PAD_DEFAULT_GAIN_TIER;
 pub const PAD_CAP0: u8 = crate::pointer_accel::PAD_DEFAULT_CAP_TIER;
 pub const NUB_GAIN0: u8 = crate::pointer_accel::NUB_DEFAULT_GAIN_TIER;
@@ -408,7 +369,7 @@ pub fn sync_modes() {
     apply_mode(TRACKPOINT_ID);
 }
 
-/// Set one device's scroll tier (1..24). `false` = out of range, value untouched.
+/// Set one device's scroll tier (1..12). `false` = out of range, value untouched.
 ///
 /// Stored as the divisor the device's table gives, not as the tier: divisors are the
 /// form `ScrollConfig` wants, and keeping one representation means the two cannot
