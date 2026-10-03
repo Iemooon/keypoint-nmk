@@ -397,6 +397,11 @@ pub async fn run(
     let mut last_scan = Instant::now();
     // The stick keeps its own slower beat; see where it is polled below.
     let mut last_pointer = Instant::now();
+    // The loop's own clock, for the queue-stuck backstop below. Same reasoning as
+    // `last_scan`: the pass length is not fixed (1 ms while typing, `idle_poll_ms`
+    // while idle, shorter when a knob or pointer edge wakes the loop early), so a
+    // pass count cannot be the unit of "how long has this packet been held".
+    let mut last_health = Instant::now();
 
     // --- the panel: when it is allowed to be touched, and what it shows -------
     //
@@ -724,11 +729,13 @@ pub async fn run(
             // The reference transmitter is still offering its snapshot at this
             // point - its `handle_send` runs on every tick and an unchanged state is
             // re-sent every DEBOUNCE ticks whatever it says (see KEEPALIVE_MS in
-            // board.toml). This one stopped here, and a half that stops is out of
-            // sync 27 ms later, so the first key after a pause paid for a search.
-            // This branch is the reference's stream at a slower rate: the same
-            // packet with the same unchanged state, often enough that the library
-            // never decides the device has been lost.
+            // board.toml). This one stops when it goes idle, so once
+            // `sync_lifetime_timeslots` of silence have passed the link is out of
+            // sync and the first key of the next burst pays a re-search unless
+            // something keeps the link alive - which is this branch's job. It is the
+            // reference's stream at a slower rate: the same packet with the same
+            // unchanged state, often enough that the library never decides the
+            // device has been lost.
             //
             // A packet the library refuses is not remembered as sent, so the next
             // pass offers it again 2 ms later (idle_poll_ms). A refusal means the
@@ -766,9 +773,15 @@ pub async fn run(
         // Cutting that work short only restarts it, and a half that restarts its
         // search every 80 ms never finishes one - which is what an earlier version
         // of this file did, and why it went quiet after a few characters.
-        // A pass is one scan period, idle or not - the tick no longer stretches,
-        // so the elapsed time is one millisecond wherever this is used.
-        let step_ms = 1;
+        //
+        // The clock below is real time, not a pass count: a pass is 1 ms while
+        // typing, `idle_poll_ms` while idle, and shorter than either when a knob or
+        // pointer edge wakes the loop early - so counting passes made
+        // `QUEUE_STUCK_MS` mean anywhere between half and twice its name. The same
+        // reasoning already converted `last_scan`, `last_pointer` and `last_active`
+        // to timestamps; this was the one left.
+        let step_ms = (now - last_health).as_millis() as u32;
+        last_health = now;
 
         let progressed = gazell::progressed();
         let moved = progressed != progress_snapshot;

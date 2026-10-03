@@ -638,24 +638,20 @@ impl GazellMatrix {
 
             let ok = nrf_gzll_init(GZLL_MODE_HOST);
 
-            // ---- the original receiver's configuration, plus two ----
+            // ---- the original receiver's configuration, plus two experiments ----
             // redox-w-receiver-basic makes exactly the calls below in this order
             // and leaves every other parameter at the library default. Two of
-            // those defaults are what they are by inheritance rather than by
-            // measurement, and one of them costs something:
+            // those defaults were questioned here and both experiments were
+            // reverted - the reasoning is kept at the call sites so it does not
+            // have to be rediscovered:
             //
-            //  * TX power. The default is 0 dBm (NRF_GZLL_DEFAULT_TX_POWER), and
-            //    for a host this is the power of the ACKs sent BACK to the halves.
-            //    A device decides its packet got through by receiving that ACK, so
-            //    the return path has been 4 dB weaker than it needs to be, and a
-            //    half that misses the ACK retries - felt as delay, and as a lost
-            //    keystroke once the retries run out. 4 dBm is the top of the enum
-            //    and the only entry in it that is not worse than the default.
+            //  * TX power. Left at the library default (0 dBm for the ACKs sent
+            //    back to the halves); the 4 dBm experiment and why it was reverted
+            //    are noted at the call site below.
             //
-            //  * Enabled pipes. The default is 0xFF, all eight, while this
-            //    receiver only ever has devices on pipes 0 and 1. `pipes_enabled`
-            //    in board.toml is the experiment for that, and carries the
-            //    reasoning.
+            //  * Enabled pipes. `pipes_enabled` in board.toml is back at the
+            //    default (0xFF); the experiment and its withdrawal are recorded
+            //    there.
             //
             // nrf_gzll_set_timeslots_per_channel() is still deliberately NOT
             // called. That one is a hard requirement rather than an inheritance:
@@ -821,7 +817,10 @@ impl GazellMatrix {
             // real turn - including the first detent after a pause, which a
             // time-based rule would have thrown away, since from here a pause and a
             // power cycle look identical.
-            if moved != 0 && moved.abs() <= ENCODER_MAX_DETENTS_PER_PACKET {
+            // (`as i16` before the `abs`, so a difference of exactly i8::MIN - 128,
+            // the one magnitude `i8::abs` cannot represent - is judged by its size
+            // like any other restart instead of wrapping through the filter.)
+            if moved != 0 && (moved as i16).abs() <= ENCODER_MAX_DETENTS_PER_PACKET as i16 {
                 self.encoder_pending[slot] = (self.encoder_pending[slot] + moved as i16)
                     .clamp(-ENCODER_PENDING_LIMIT, ENCODER_PENDING_LIMIT);
             }
@@ -906,9 +905,11 @@ impl GazellMatrix {
             }
 
             // Link timeout: a half that has gone quiet releases its keys, so a
-            // lost final packet cannot leave a key stuck. The transmitters power
-            // themselves off 0.5 s after the last key, so this only ever fires on
-            // a half that is genuinely gone.
+            // lost final packet cannot leave a key stuck. The transmitters stop
+            // sending about half a second after the last key, so this fires once at
+            // the end of a normal quiet stretch - releasing keys that are already
+            // up, and re-baselining the pointer for the next burst - and it is what
+            // saves a half that is genuinely gone.
             let now = embassy_time::Instant::now().as_millis();
             for slot in 0..HALVES {
                 if self.last_seen_ms[slot] != 0
