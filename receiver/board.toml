@@ -200,9 +200,11 @@ timeslot_period_us = 900
 pipes_enabled = 255
 
 # A half that has not sent for this long has all its keys released, so a lost
-# final packet cannot leave a key stuck down. The transmitters only send on
-# change and go to sleep 0.5 s after the last key, so this must be comfortably
-# longer than that is short - it only ever fires on a half that is really gone.
+# final packet cannot leave a key stuck down. The transmitters re-send while a key
+# is held and stop sending about 0.5 s after the last one, so this fires once at
+# the end of a normal quiet stretch - releasing keys that are already up, and
+# re-baselining the pointer for the next burst - and it is what saves a half that
+# is really gone.
 link_timeout_ms = 500
 
 # How often the received snapshot is turned into key events. 1 ms is the rate

@@ -453,8 +453,9 @@ timeslots_per_channel_when_out_of_sync = 15
 # 30, so 30 and 500 were indistinguishable and copying the reference was free.
 #
 # `keepalive_ms = 0` removed that. This half now goes silent the moment it goes
-# idle, the counter runs down unopposed, and 27 ms later the link is out of sync -
-# so EVERY first key after a pause of more than 27 ms pays a full re-search:
+# idle, the counter runs down unopposed, and at the 30 timeslots this file held
+# then the link was out of sync 27 ms later - so EVERY first key after a pause of
+# more than 27 ms paid a full re-search:
 # `timeslots_per_channel_when_out_of_sync` (15) x this half's 3 channels = 45
 # timeslots = 40.5 ms, on top of the 8.9 ms the rest of the chain costs. That is
 # the single largest term in this keyboard's typing latency, and it is a term the
@@ -466,9 +467,9 @@ timeslots_per_channel_when_out_of_sync = 15
 # timer runs regardless, because `radio_off_when_idle` is false - see the note on
 # `nrf_gzll_disabled()` in nrf_gzll.h:328). The original reason for 500, recorded
 # in src/gazell.rs, also still stands and is now stronger: one packet may retry for
-# up to `max_tx_attempts` (100) timeslots = 90 ms, which is longer than a 27 ms
-# sync lifetime, so a single lost packet used to be enough to demote the half to a
-# re-search.
+# up to `max_tx_attempts` (100) timeslots = 90 ms, which was longer than the
+# 27 ms sync lifetime of the day, so a single lost packet used to be enough to
+# demote the half to a re-search.
 #
 # The general lesson, since it will apply to every other parameter in this file:
 # a value copied from a reference implementation is only valid under that
@@ -493,11 +494,11 @@ timeslots_per_channel_when_out_of_sync = 15
 #    500 (~450 ms) is inside the one-second bound this project holds itself to;
 #    3000 (~2.7 s) is not, which is the real reason the value stops here.
 #
-# What 500 buys: it covers every ordinary gap in typing - between words, between
-# sentences, a pause to think - so the first key after one costs the same 8.9 ms as
-# a key in the middle of a run, instead of 49.5 ms. Longer pauses still pay the
-# search, and still should: a half that has been silent for minutes ought not to
-# assume the host is where it left it.
+# What 500 buys: it covers the gaps inside a typing stretch - between words,
+# between sentences - so the first key after one costs the same 8.9 ms as a key in
+# the middle of a run, instead of 49.5 ms. Longer pauses - a pause to think, a
+# reach for the coffee - still pay the search, and still should: a half that has
+# been silent for minutes ought not to assume the host is where it left it.
 sync_lifetime_timeslots = 500
 
 # Which channel a new packet starts on (see the policy enum in nrf_gzll.h).
@@ -659,18 +660,20 @@ active_release_ms = 500
 # never stops while a session is going.
 #
 # Why that matters here: the library drops a device out of sync after
-# sync_lifetime_timeslots of silence - 30 x 900 us = 27 ms, see [gazell] - and a
+# sync_lifetime_timeslots of silence - 500 x 900 us = ~450 ms, see [gazell] - and a
 # device that is out of sync has to SEARCH for the host before its next packet can
 # land. That search is the 15-timeslot dwell in `when_out_of_sync` times three
 # channels, and by the arithmetic in the [gazell] max_tx_attempts note it can run
-# to tens of milliseconds. So a burst that starts more than ~0.5 s after the last
-# one begins with that search, and the first character of it pays for it. The
-# reference never pays it inside a session.
+# to tens of milliseconds. So a burst that starts about a second after the last one
+# (the half stops sending ~0.5 s after the last key, and the sync window runs out
+# ~450 ms after that) begins with that search, and the first character of it pays
+# for it. The reference never pays it inside a session.
 #
 # keepalive_ms is that stream, at a slower rate: while idle and otherwise silent, a
 # packet carrying the current (all-released) state goes out every keepalive_ms.
 #
-#   15  = half of the 27 ms the library tolerates, i.e. two chances per window.
+#   15  = chosen when the sync window was 27 ms (two chances per window); with the
+#         window now at ~450 ms it is simply "often enough".
 #   0   = off; the behaviour before this change (nothing at all while idle).
 #
 # The packet carries no information: the counters it repeats are unchanged, so the
@@ -689,7 +692,7 @@ active_release_ms = 500
 # (100% -> 81%), and this stream is the largest single known load on the half:
 # one radio transmission every 15 ms, which also keeps the 32 MHz crystal
 # starting up all night. With the stream gone the radio's clock finally stops
-# between keys and Gazell falls out of sync 27 ms after the last packet - so the
+# between keys and Gazell falls out of sync ~450 ms after the last packet - so the
 # first key of a burst after a pause MAY pay a search, which is exactly what this
 # value buys and what is being tested. Revert to 15 if that search is felt.
 keepalive_ms = 0

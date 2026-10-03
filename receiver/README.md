@@ -20,9 +20,9 @@ parameters) re-aimed at this keyboard's shape.
 
 The halves' raw bytes are stored in `RAW`, which is a pair of `AtomicU32`s per
 half (6 rows do not fit in one word). A report is therefore written as two
-stores; a reader can catch the pair half-updated. That is deliberate and
-harmless — a report is repeated every 5 ms while any key is down, and RMK's
-debouncer only accepts a change it sees sustained. See `src/gazell.rs`.
+stores, and the reader takes both loads with interrupts off (`pump()`), so it can
+never catch the pair half-updated — a handful of instructions once per packet per
+half. See `src/gazell.rs`.
 
 ## Layout
 

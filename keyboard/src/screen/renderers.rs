@@ -110,9 +110,10 @@ const POINTER_LINE_PITCH: i32 = 13;
 /// The rows the state line lives in, as a half-open range.
 ///
 /// Also the driver's unit of work when the line changes: `flush_rows` sends exactly
-/// these 28 of the panel's 144 lines, about 0.6 ms at 4 MHz, against 3 ms for a whole
-/// frame - which is what makes it safe to update the line the moment a switch key is
-/// pressed. Everything drawn between `POINTER_BAND.0` and `POINTER_BAND.1` must stay
+/// these 28 of the panel's 144 lines - about 0.6 ms on the 4 MHz bus this was
+/// measured at, against 3 ms for a whole frame; the bus runs at 32 MHz now (see
+/// `new_screen`) - which is what makes it safe to update the line the moment a
+/// switch key is pressed. Everything drawn between `POINTER_BAND.0` and `POINTER_BAND.1` must stay
 /// inside it.
 pub const POINTER_BAND: (i32, i32) = (116, 144);
 const FILL_PAPER: PrimitiveStyle<Rgb888> = PrimitiveStyle::with_fill(PAPER);
@@ -425,8 +426,8 @@ fn colour_of(nibble: u8) -> Rgb888 {
 /// This is the path a colour drawing arrives through - generate it with
 /// `tools/png_to_screen.py`, put the array where `capy_art.rs` lives, and draw it from
 /// a function shaped like `draw_capy`. One evening's worth of such drawings went
-/// through it (2026-09-26) and are parked in
-/// `_quarantine-2026-09-26/art-pictures/`, with `make_art.py` able to rebuild them.
+/// through it (2026-09-26) and were parked in `_quarantine-2026-09-26/art-pictures/`
+/// (not part of this repository), with `make_art.py` able to rebuild them.
 #[allow(dead_code, clippy::too_many_arguments)]
 fn blit_colour<D: DrawTarget<Color = Rgb888>>(
     d: &mut D,

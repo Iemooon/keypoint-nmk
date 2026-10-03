@@ -137,7 +137,8 @@ pub fn init(pipe: u32, channel_table: &[u8]) {
         // for a different problem. `TIMESLOTS_PER_CHANNEL` applies once the link is
         // up; this one decides how long a stutter lasts when it is lost, and
         // therefore whether a key pressed during the stutter is sent at all. See
-        // board.toml for the arithmetic behind 4.
+        // board.toml for why this is 15 - the reference's value, after an earlier
+        // arithmetic-derived 4 was withdrawn.
         nrf_gzll_set_timeslots_per_channel_when_device_out_of_sync(
             TIMESLOTS_PER_CHANNEL_WHEN_OUT_OF_SYNC,
         );
@@ -187,9 +188,9 @@ pub fn init(pipe: u32, channel_table: &[u8]) {
 
 /// Queue a *changed* snapshot for transmission - and never let it be dropped.
 ///
-/// Returns whether the library took it. This is the function for a state the keys
-/// have just moved to; `send_repeat` is the one for re-offering a state that is
-/// already out there.
+/// Returns whether the library took it. There is no separate `send_repeat`: a
+/// change and a repeat take the same path, and the difference lives in the caller's
+/// cadence (lib.rs re-offers a stable state every `DEBOUNCE_TICKS`).
 ///
 /// **Why a change is not gated on the queue being empty.** The queue holds three
 /// packets and the pool behind it six, shared with the other half, and Gazell only
@@ -205,8 +206,9 @@ pub fn init(pipe: u32, channel_table: &[u8]) {
 /// `add_packet` and ignores the result, letting the library refuse what will not
 /// fit. That is right for changes, and it is what this function reproduces.
 ///
-/// The caller keeps a state as "not yet offered" until this returns true, so a
-/// refusal is retried instead of forgotten.
+/// The caller does not gate on the return value: a refused offer is simply offered
+/// again at the next cadence, which is safe because a refusal means the queue is
+/// full - i.e. the link is demonstrably moving.
 pub fn send(pipe: u32, payload: &mut [u8]) -> bool {
     unsafe {
         if !nrf_gzll_ok_to_add_packet_to_tx_fifo(pipe) {
@@ -322,7 +324,7 @@ pub fn reset(pipe: u32, channel_table: &[u8]) {
 /// nothing to read. What it does instead is count both, because "has anything
 /// produced a callback recently" is the only direct evidence this side has that
 /// the link is moving at all - and that is the question the main loop needs
-/// answered (see `PENDING_STUCK_MS` in lib.rs).
+/// answered (see `QUEUE_STUCK_MS` in lib.rs).
 ///
 /// `tx_failed` counts too, and not as an error: it means the library did put the
 /// packet on the air and got no acknowledgement. Either callback proves the

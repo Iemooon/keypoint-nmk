@@ -26,7 +26,7 @@ Two firmwares that together replace the keyboard's BLE link with a Nordic Gazell
 
 | Directory | What it is | Chip / delivery |
 |---|---|---|
-| `keyboard/` | **Transmitter half.** Scans its own 6x8 matrix, transmits the snapshot over Gazell, drops to a 10 ms poll with the radio off when idle. No keymap, no USB, no BLE, no RMK. | nRF52840 half, app at `0x1000`, flashed as **UF2** (drag onto the `BOOT` drive) |
+| `keyboard/` | **Transmitter half.** Scans its own 6x8 matrix, transmits the snapshot over Gazell, drops the scan rate while idle; also carries its own encoder, pointing device, status panel and battery sense. No keymap, no USB, no BLE, no RMK. | nRF52840 half, app at `0x1000`, flashed as **UF2** (drag onto the `BOOT` drive) |
 | `receiver/` | **Receiver.** Gazell host; merges both halves into one 12x8 matrix and publishes it to RMK as key events; USB HID keyboard with Vial. | nRF52840 dongle (PCA10059), app at `0x1000`, flashed with **nRF Connect Programmer** (`.hex`) |
 
 Both crates are independent: separate `Cargo.toml`, separate `target/`, built
@@ -165,8 +165,11 @@ and removes a whole class of idle wake-ups.
 * A half scans at 1000 Hz while keys are in use, and sends whenever its state has
   been stable for 5 ticks - and keeps re-sending while it stays stable. The
   repetition is what keeps the receiver's link alive while a key is held.
-* Once nothing has been pressed for `active_release_ms` (200 ms) it drops to
-  `idle_poll_ms` (10 ms) and switches the radio off; the first press wakes both.
+* Once nothing has been pressed for `active_release_ms` (500 ms) it drops the
+  matrix scan to `idle_poll_ms` (2 ms). The radio stays enabled
+  (`radio_off_when_idle = false`, as on the reference transmitter), and nothing is
+  sent while idle - so a burst that starts more than about a second after the last
+  one pays one re-acquisition before its first packet lands.
 * **The chip is never powered down any more.** The first version entered
   SYSTEMOFF after 0.5 s, as the original transmitter does, and that was wrong on
   this keyboard for a reason worth keeping written down: SYSTEMOFF is exited by a
@@ -179,14 +182,14 @@ and removes a whole class of idle wake-ups.
   keystroke ("I have to press a key several times").
 * What made that trade look necessary was a wrong assumption about where the
   current goes. SYSTEMOFF is ~1 uA; the 1 kHz polling loop it replaced is worth
-  tens of uA. Dropping to 10 ms polls with the radio off lands in the same order
-  of magnitude as SYSTEMOFF, while a press is still caught within one poll period
-  and the radio is already re-acquiring by the time the key is debounced.
+  tens of uA. Dropping the scan rate while idle was the lever that made the trade
+  workable: a press is still caught within one poll period, and by the time it is
+  debounced the half is back at full rate.
 * Dials, all in `keyboard/board.toml`: `idle_poll_ms` (detection latency against idle
   current), `active_release_ms` (how long a typing pause may last before the half
-  drops back to polling), and `[gazell] radio_off_when_idle` (default true; false
-  keeps the radio listening, saving the 1..11 ms re-acquisition at the cost of the
-  periodic receive current).
+  drops back to polling), `[gazell] keepalive_ms` (how often a quiet half repeats
+  its state to hold the link in sync; currently 0), and `[gazell] radio_off_when_idle`
+  (currently false - the radio stays listening, as on the reference transmitter).
 
 ## Vial: this receiver *is* the keyboard
 
@@ -267,20 +270,22 @@ untested, since no 52833 board has been flashed with this firmware.
 
 **NOT verified:** radio range, and coexistence with the neighbouring 2.4 GHz
 keyboard (`planckduos-nmk`) while both are powered, have not been measured - the
-zero-intersection channel tables are the argument, not a measurement. Nor has the
-idle current of the new shallow sleep been on a meter: SYSTEMOFF is ~1 uA and this
-is expected to land in the tens of uA, which is small against a Li-ion's own
-self-discharge, but "expected" is not "measured". Remaining suspect list if
+zero-intersection channel tables are the argument, not a measurement. The idle
+current has since been on a meter: ~3.4 mA average over 14 h on a 250 mAh cell,
+measured with the idle keepalive stream running; that stream - the largest single
+known load on a half - is off since 2026-09-28 while its effect on typing is
+tested (see `keyboard/board.toml`). Remaining suspect list if
 something misbehaves: wrong diode direction or swapped pins for one half
 (`keyboard/board.toml`), the two halves' images flashed the wrong way round, and only
 then the channel table.
 
-## Not in this step
+## The halves' other hardware
 
 The halves also carry a display, a touchpad (left), a trackpoint (right), an
-encoder and battery sense. None of that is handled yet — this is the
-keyboard-only step. The encoder is cheap when it comes (it can ride along as
-extra matrix cells, which is how the original firmware's knob variant does it);
-the pointer devices and the display need a packet-type byte in the payload, and
-the display would reintroduce a host-to-half direction that was deliberately
-dropped here.
+encoder and battery sense - all of it implemented. The encoder count and the
+pointing device's raw displacement ride in the report; everything that decides
+what a turn or a movement means (keymap, layers, speed, scroll) lives in the
+receiver, which is where the keymap is. The panel and the battery readout are the
+half's own business: the display carries no host content and the battery
+percentage is shown there rather than reported, so the link stays one-way - see
+"Single direction, on purpose" above.

@@ -7,8 +7,11 @@
 //!   real glass.
 //! * `capy_art` - the animation frames, likewise carried over.
 //! * `renderers` - what goes on screen, which is where this build differs: a
-//!   half has no link to the receiver, so the badge, layer name and battery
-//!   readout of the old build have no honest source here and are gone.
+//!   half has no link to the receiver, so the connection badge and the layer name
+//!   of the old build have no honest source here and are gone. The battery
+//!   readout stays - it is measured on this half's own sense pin - and the
+//!   pointer-state line is new (the pointing device's switches live on this
+//!   half).
 //!
 //! ## When it paints
 //!
@@ -17,17 +20,19 @@
 //! has no sleep command, so painting it on a schedule would burn power to
 //! redraw a picture that has not changed.
 //!
-//! Instead the screen is driven by events the loop was going to handle anyway:
+//! Instead the screen is driven by the loop's own state, under one hard rule: no
+//! transfer starts unless this half has been quiet for `QUIET_FOR_PAINT_MS`
+//! (seconds) - see the long note below for the measurement that forces this. Two
+//! things are told to the panel, and they differ:
 //!
-//! * the moment this half goes idle, and the moment it starts working again -
-//!   these are exactly the two transitions the `RUN`/`IDLE` word reports;
-//! * every `REDRAW_KEYS` key events while active, so the animation gets a chance
-//!   to advance and the screen is not frozen for a whole session.
+//! * the pointer-state line goes out the moment it changes - a switch key being
+//!   pressed is itself a keypress, so it cannot wait for quiet; it is answered
+//!   with one 28-line band (`flush_rows`) rather than a frame;
+//! * everything else (animation, battery), once per quiet stretch.
 //!
-//! Both are rare, and both happen at moments when nothing is waiting on the SPI
-//! bus. A flush is 144 column lines at 4 MHz, about 3 ms, which is longer than a
-//! matrix scan period - which is why the caller paints AFTER sending, never
-//! before, and why nothing paints while a key is on its way out.
+//! A full flush is 144 column lines; it cost about 3 ms on the 4 MHz bus this
+//! rule was derived on, and the bus runs at 32 MHz now (see `new_screen`). The
+//! caller only ever asks for a repaint from inside a quiet window.
 
 pub mod capy_art;
 pub mod lpm009m360a;
@@ -214,15 +219,15 @@ pub const REDRAW_KEYS: u32 = 1000;
 // out earlier: an async task that never blocks the loop still dropped keys).
 //
 // The occasional-not-always character is consistent with that: only a burst whose
-// first packet lands inside the 3 ms sweep is exposed, and only a tap short enough
-// to be swallowed by the resulting retry gap is actually lost.
+// first packet lands inside the flush's sweep is exposed, and only a tap short
+// enough to be swallowed by the resulting retry gap is actually lost.
 //
 // WHAT RECOVERING RUN WOULD TAKE, in the order worth trying:
 //
 //   1. paint only the RUN/IDLE glyph instead of the whole frame. It is 7 columns,
 //      ~154 us, about a twentieth of the sweep. If duration is what matters - and
-//      the boot frame's 3 ms with an idle radio suggests it is - this may be
-//      survivable at burst start.
+//      the boot frame's ~3 ms (at 4 MHz) with an idle radio suggests it is - this
+//      may be survivable at burst start.
 //   2. shorten Gazell's re-acquisition instead, so a perturbation cannot strand the
 //      link for long. `timeslots_per_channel_when_device_out_of_sync` is 15 (the
 //      library default, deliberately kept to match the reference transmitter), and
@@ -230,24 +235,20 @@ pub const REDRAW_KEYS: u32 = 1000;
 //      are knobs on how expensive it is to be interrupted at the wrong moment.
 //   3. a flush that abandons itself between columns, so a burst arriving mid-sweep
 //      truncates the transfer instead of waiting it out. Weak on its own: while
-//      idle the loop ticks every 10 ms, so the abort would be noticed far too late
-//      to matter. It only helps combined with a faster wake-up.
+//      idle the loop only ticks every `idle_poll_ms`, so the abort would be noticed
+//      far too late to matter. It only helps combined with a faster wake-up.
 //
 // NOT DONE, and worth knowing before loosening anything: the flush is still one
-// 3 ms sweep with no way to abandon it part-way, and while the half is quiet the
-// main loop only looks at the matrix every 10 ms. So the residual exposure is
-// "user resumes typing inside the 3 ms after a clear pause" - rare, but not zero.
+// uninterrupted sweep rather than something that can abandon itself part-way, and
+// while the half is quiet the main loop only looks at the matrix every
+// `idle_poll_ms`. So the residual exposure is "user resumes typing inside the
+// sweep after a clear pause" - rare, but not zero, and if drops ever show up again
+// under heavy typing that is the first place to look.
 //
 // The cost is that a long typing session leaves the screen frozen on its last
 // frame, and that the animation advances only during breaks. That is the
 // intended trade: typing has the highest priority, and this is what buying it
 // looks like.
-//
-// NOT DONE, and worth knowing before loosening anything: the flush is still one
-// 3 ms sweep rather than something that can abandon itself part-way. A key
-// pressed during those 3 ms is still exposed. The quiet window makes that
-// vanishingly rare, but it is not zero, and if drops ever show up again under
-// heavy typing that is the first place to look.
 // ---------------------------------------------------------------------------
 
 /// Tells the screen task to compose and paint a frame.
@@ -323,7 +324,8 @@ async fn read_battery_percent(battery: &mut Battery, full_counts: i32) -> Option
 ///
 /// (For one evening - 2026-09-26 - this parameter was `&LEFT_ART`/`&RIGHT_ART`, a
 /// fixed drawing per half. Lemon called that off the same night and the animation is
-/// back. The drawings are parked in `_quarantine-2026-09-26/art-pictures/`.)
+/// back. The drawings were parked in `_quarantine-2026-09-26/art-pictures/`,
+/// which is not part of this repository.)
 ///
 /// `label` names this half's own pointing device, for the state line.
 /// `full_counts` is where this half's cell rests when its charger says it is full -
